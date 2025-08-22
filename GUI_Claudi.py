@@ -162,6 +162,25 @@ def clean_text(text):
     return text
 
 
+def table_prev_path(filename):
+    """Путь к файлам в папке table_prev"""
+    if hasattr(sys, '_MEIPASS'):
+        base_path = os.path.normpath(sys._MEIPASS)
+    else:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, "table_prev", filename)
+
+
+def templates_path(filename):
+    """Путь к файлам в папке templates"""
+    if hasattr(sys, '_MEIPASS'):
+        base_path = os.path.normpath(sys._MEIPASS)
+    else:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, "templates", filename)
+
 def resource_path(relative_path):
     """
     Возвращает путь к ресурсу, учитывая работу через PyInstaller.
@@ -882,19 +901,20 @@ def generate_report_logic(doc, output_file_path, selected_template):
 
                 # Выбор шаблона Word
                 template_map = {
-                    "КВД_Заполярка": "KVD_Zapolyarka.docx",
-                    "КВД_Оренбург": "KVD_Orenburg.docx",
-                    "КВД_Оренбург_газ": "KVD_Orenburg_gas.docx",
-                    "КВД_Оренбург2": "KVD_Orenburg2.docx",
-                    "КВД_Хантос": "KVD_Khantos.docx",
-                    "КВД_глушение": "KVD_For_Killing.docx",
-                    "КВД_ННГ": "KVD_NNG.docx",
-                    "КВД+ИД": "KVD_ID.docx",
-                    "КСД": "KSD.docx",
-                    "КПД": "KPD.docx",
-                    "КПД+ИД": "KPD_ID.docx",
-                    "ГРП": "GRP.docx"
+                    "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
+                    "КВД_Оренбург": templates_path("KVD_Orenburg.docx"),
+                    "КВД_Оренбург_газ": templates_path("KVD_Orenburg_gas.docx"),
+                    "КВД_Оренбург2": templates_path("KVD_Orenburg2.docx"),
+                    "КВД_Хантос": templates_path("KVD_Khantos.docx"),
+                    "КВД_глушение": templates_path("KVD_For_Killing.docx"),
+                    "КВД_ННГ": templates_path("KVD_NNG.docx"),
+                    "КВД+ИД": templates_path("KVD_ID.docx"),
+                    "КСД": templates_path("KSD.docx"),
+                    "КПД": templates_path("KPD.docx"),
+                    "КПД+ИД": templates_path("KPD_ID.docx"),
+                    "ГРП": templates_path("GRP.docx")
                 }
+
 
                 # Преобразуем ключи в нижний регистр для сравнения
                 template_map_lower = {k.lower(): v for k, v in template_map.items()}
@@ -921,7 +941,7 @@ def generate_report_logic(doc, output_file_path, selected_template):
                 logging.info(f"Имя файла предыдущих данных: {previous_data_file}")  # Логирование имени файла
                 logging.info(f"Текущая рабочая директория: {os.getcwd()}")
 
-                previous_data_path = resource_path(previous_data_file)
+                previous_data_path = table_prev_path(previous_data_file)
                 logging.info(f"Путь к файлу предыдущих данных: {previous_data_path}")  # Логирование пути
 
                 # Проверяем существование файла перед попыткой его обработки
@@ -1665,7 +1685,32 @@ class ReportGUI:
         self.pdf_path = None
         self.output_file_path = None
         self.root.title("Параметры проекта")
-        self.root.geometry("900x1000")  # Уменьшен размер окна
+        self.root.minsize(900, 600)  # Уменьшен размер окна
+
+        # Создаем основной фрейм с прокруткой
+        self.main_frame = ttk.Frame(self.root)
+        self.main_frame.pack(fill='both', expand=True)
+
+        # Создаем canvas и scrollbar
+        self.canvas = tk.Canvas(self.main_frame)
+        self.scrollbar = ttk.Scrollbar(self.main_frame, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        # Привязываем прокрутку колесом мыши
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.scrollable_frame.bind("<Enter>", self._bind_mousewheel)
+        self.scrollable_frame.bind("<Leave>", self._unbind_mousewheel)
 
         # Инициализация стиля для зеленой кнопки
         self.style = ttk.Style()
@@ -1689,7 +1734,19 @@ class ReportGUI:
         # Очистка Excel-файла при запуске
         self.clear_excel_on_startup()
 
-        self.setup_gui()
+        self.setup_gui(self.scrollable_frame)
+
+    def _on_canvas_configure(self, event):
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _bind_mousewheel(self, event):
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self, event):
+        self.canvas.unbind_all("<MouseWheel>")
+
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def clear_excel_on_startup(self):
         try:
@@ -1820,8 +1877,8 @@ class ReportGUI:
         # self.kill_excel_processes()
         self.root.destroy()
 
-    def setup_gui(self):
-        self.notebook = ttk.Notebook(self.root)
+    def setup_gui(self, parent):
+        self.notebook = ttk.Notebook(parent)
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
 
         self.tab1 = ttk.Frame(self.notebook)
@@ -2556,18 +2613,18 @@ class ReportGUI:
             wb.close()
 
             template_mapping = {
-                "КВД_Заполярка": "KVD_Zapolyarka.docx",
-                "КВД_Оренбург": "KVD_Orenburg.docx",
-                "КВД_Оренбург_газ": "KVD_Orenburg_gas.docx",
-                "КВД_Оренбург2": "KVD_Orenburg2.docx",
-                "КВД_Хантос": "KVD_Khantos.docx",
-                "КВД_глушение": "KVD_For_Killing.docx",
-                "КВД_ННГ": "KVD_NNG.docx",
-                "КВД+ИД": "KVD_ID.docx",
-                "КСД": "KSD.docx",
-                "КПД": "KPD.docx",
-                "КПД+ИД": "KPD_ID.docx",
-                "ГРП": "GRP.docx"
+                "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
+                "КВД_Оренбург": templates_path("KVD_Orenburg.docx"),
+                "КВД_Оренбург_газ": templates_path("KVD_Orenburg_gas.docx"),
+                "КВД_Оренбург2": templates_path("KVD_Orenburg2.docx"),
+                "КВД_Хантос": templates_path("KVD_Khantos.docx"),
+                "КВД_глушение": templates_path("KVD_For_Killing.docx"),
+                "КВД_ННГ": templates_path("KVD_NNG.docx"),
+                "КВД+ИД": templates_path("KVD_ID.docx"),
+                "КСД": templates_path("KSD.docx"),
+                "КПД": templates_path("KPD.docx"),
+                "КПД+ИД": templates_path("KPD_ID.docx"),
+                "ГРП": templates_path("GRP.docx")
             }
 
             # Получаем выбранный шаблон (ключ)
@@ -2584,7 +2641,7 @@ class ReportGUI:
                 logging.info("Создание файла KVD_For_Killing.docx...")
                 result = copy_excel_to_word_pandas(
                     excel_path=resource_path('Report.xlsx'),
-                    word_path=os.path.abspath(resource_path('КВД для глушения_prev.docx')),
+                    word_path=os.path.abspath(templates_path('КВД для глушения_prev.docx')),
                     sheet_name='current',
                     search_text='Prognoz_Ppl'
                 )
