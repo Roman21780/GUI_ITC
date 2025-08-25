@@ -1,5 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import pyodbc
+from database import AccessDatabase
 
 import win32com.client
 from django.contrib.messages import success
@@ -863,7 +865,6 @@ def generate_report_logic(doc, output_file_path, selected_template):
 
     logging.info(f"Начало формирования отчета. Выходной файл: {output_file_path}, Шаблон: {selected_template}")
     try:
-        import win32com.client
         logging.info(f"Output file path: {output_file_path}")
         logging.info(f"Selected template: {selected_template}")
 
@@ -875,9 +876,6 @@ def generate_report_logic(doc, output_file_path, selected_template):
         """
         try:
 
-            # output_file_path = os.path.abspath(output_file_path)
-            # template_name = selected_template
-            # os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
 
             # Инициализация переменных
             excel_app = None
@@ -887,18 +885,19 @@ def generate_report_logic(doc, output_file_path, selected_template):
             doc_word = None
 
             try:
-                # Инициализация COM
-                logging.info("Инициализация COM-объектов")
-                pythoncom.CoInitialize()
 
-                # Открываем Excel-файл-----------------------------------------
-                logging.info("Открытие Excel-файла")
-                excel_app = win32com.client.DispatchEx("Excel.Application")
-                excel_app.Visible = False  # Наш экземпляр будет невидимым
-                excel_app.DisplayAlerts = False
+                db = AccessDatabase()
+                last_record = db.get_last_record()
 
-                workbook = excel_app.Workbooks.Open(resource_path("Report.xlsx"))
-                sheet = workbook.Sheets('current')
+                if last_record.empty:
+                    raise ValueError("Нет данных для формирования отчета")
+
+                # Преобразуем запись в словарь
+                data = {}
+                for column in last_record.columns:
+                    value = last_record.iloc[0][column]
+                    if pd.notna(value):
+                        data[column] = value
 
                 # Выбор шаблона Word
                 template_map = {
@@ -930,23 +929,11 @@ def generate_report_logic(doc, output_file_path, selected_template):
 
                 # Добавление данных из предыдущего исследования --------------------------------------
 
-                fld = sheet.Range('B2').Value
-                if fld is None or not str(fld).strip():
-                    raise ValueError("Ячейка B2 пуста или содержит некорректные данные!")
-
-                # Преобразуем значение fld в строку и выполняем замену пробелов
-                field_name = str(fld).replace(" ", "_").capitalize()  # Заменяем пробелы на подчеркивания
-                logging.info(f"Имя поля: {field_name}")  # Логирование имени поля
-
-                previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
-                logging.info(f"Имя файла предыдущих данных: {previous_data_file}")  # Логирование имени файла
-                logging.info(f"Текущая рабочая директория: {os.getcwd()}")
-
-                previous_data_path = table_prev_path(previous_data_file)
-                logging.info(f"Путь к файлу предыдущих данных: {previous_data_path}")  # Логирование пути
-
-                # Проверяем существование файла перед попыткой его обработки
                 try:
+                    field_name = data.get('field', '').replace(" ", "_").capitalize()
+                    previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
+                    previous_data_path = table_prev_path(previous_data_file)
+
                     if os.path.exists(previous_data_path):
 
                         # Если файл существует, пытаемся его прочитать
@@ -1335,32 +1322,8 @@ def generate_report_logic(doc, output_file_path, selected_template):
                     **{f"param_{k}": v for k, v in enumerate(model_data.get("additional_params", []))},
                 })
 
-                # Применяем форматирование ко всем значениям в словаре data
-                # formatted_data = {k: format_units(str(v)) for k, v in data.items()}
-
-                # Замена меток в параграфах с форматированием единиц измерения
-                # replace_text_in_paragraphs(doc, formatted_data)-----
-
-                # Замена меток в таблицах и тексте
-                # replace_tags_safely(doc, formatted_data)
-                # replace_tags_perfectly(doc, data)---
-                # replace_plain_tags(doc, data)
-                # replace_tags_preserve_format(doc, data)
-                # replace_tags_preserve_context(doc, data)
                 replace_tags_only(doc, data)
 
-                # for paragraph in doc.paragraphs:
-                #     for run in paragraph.runs:
-                #         original_text = run.text
-                #         for key, value in formatted_data.items():
-                #             if key in original_text:
-                #                 # Форматируем значение с сохранением степеней
-                #                 formatted_value = format_units(str(value))
-                #                 run.text = original_text.replace(key, formatted_value)
-                #                 set_font_size(run, 12)
-
-                # Замена меток в таблицах с правильным выравниванием
-                # replace_and_format_table(doc, formatted_data)-----
 
                 logging.info("Метки в отчете успешно заменены на значения.")
 
@@ -1415,11 +1378,6 @@ def generate_report_logic(doc, output_file_path, selected_template):
 
                     logger.info("Начало обновления Helper.xlsm")
 
-                    if data.get("type_of_research") in ["КВД", "КВУ","КСД","ИК+КВУ","ИК+КВД","ГРП","ГДП","ИД+КВД"]:
-                        category = "доб"
-                    else:
-                        category = "нагн"
-
                     new_row = {
                         "Дата интерпретации": data.get("date_of_analiz"),
                         "Дата начала исследования": data.get("date_research"),
@@ -1433,7 +1391,7 @@ def generate_report_logic(doc, output_file_path, selected_template):
                         "№скв.": data.get("well").split()[0] if len(data.get("well", "").split()) > 1 else data.get(
                             "well",
                             ""),
-                        "Категория скважин": category,
+                        "Категория скважин": "доб",
                         "Вид исследования": data.get("type_of_research"),
                         "Исполнитель (организация)": "ИТС",
                         "Интерпретатор": data.get("interpreter"),
@@ -1513,20 +1471,8 @@ def generate_report_logic(doc, output_file_path, selected_template):
                 raise RuntimeError(f"Ошибка формирования отчета: {str(e)}")
 
             finally:
-                # Гарантированное освобождение ресурсов
-                try:
-                    if 'workbook' in locals() and workbook:
-                        workbook.Close(False)
-                    if 'doc_word' in locals() and doc_word:
-                        doc_word.Close(False)
-                    excel_app = None
-                    word_app = None
-                    workbook = None
-                    doc_word = None
-                except Exception as e:
-                    logging.warning(f"Ошибка при освобождении ресурсов: {str(e)}")
-
-                # pythoncom.CoUninitialize()
+                if db:
+                    db.close()
 
         except Exception as e:
             logger.error(f"Ошибка при формировании отчета: {str(e)}")
@@ -1726,9 +1672,7 @@ class ReportGUI:
 
         self.base_dir = os.path.dirname(__file__)
 
-        # Пути к ресурсам
-        self.excel_file = resource_path('Report.xlsx')
-        # self.report_generation_script = resource_path('report_generation.py')
+        self.db = AccessDatabase()
 
         self.section_params = {
             1: {"start_cell": "A1", "expected_columns": 2, "description": "Входные данные"},
@@ -1757,132 +1701,24 @@ class ReportGUI:
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def clear_excel_on_startup(self):
+        """Теперь очищаем базу данных вместо Excel"""
         try:
-            if not os.path.exists(self.excel_file):
-                logging.error(f"Файл не найден: {self.excel_file}")
-                messagebox.showerror("Ошибка", f"Файл не найден: {self.excel_file}")
-                return
-
-            wb = load_workbook(self.excel_file)
-            ws = wb['current']
-
-            # Очистка диапазона A1:B16
-            for row in range(1, 17):  # Строки 1–16
-                for col in ['A', 'B']:
-                    cell = ws[f"{col}{row}"]
-                    if not isinstance(cell, MergedCell):
-                        cell.value = None
-
-            # Очистка конкретных ячеек
-            specific_cells = ['C14', 'C16', 'A19', 'A20', 'A23', 'C29', 'C34', 'J4']
-            for cell_address in specific_cells:
-                cell = ws[cell_address]
-                if not isinstance(cell, MergedCell):
-                    cell.value = None
-
-            # Очистка диапазонов B26:C28 и B31:C33
-            for row in range(26, 29):  # Строки 26–28
-                for col in ['B', 'C']:
-                    cell = ws[f"{col}{row}"]
-                    if not isinstance(cell, MergedCell):
-                        cell.value = None
-            for row in range(31, 34):  # Строки 31–33
-                for col in ['B', 'C']:
-                    cell = ws[f"{col}{row}"]
-                    if not isinstance(cell, MergedCell):
-                        cell.value = None
-
-            # Очистка столбцов D, E, F, G, H, I, L, M, N, O, Q, R, T, U, V, W, Y, Z
-            columns_to_clear = ['D', 'E', 'F', 'G', 'H', 'I', 'L', 'M', 'N', 'O', 'Q', 'R', 'T', 'U', 'V', 'W', 'Y',
-                                'Z']
-            for col in columns_to_clear:
-                for row in range(1, ws.max_row + 1):  # Все строки в столбце
-                    cell = ws[f"{col}{row}"]
-                    if not isinstance(cell, MergedCell):
-                        cell.value = None
-
-            wb.save(self.excel_file)
+            self.db.clear_data()
+            logging.info("База данных очищена при запуске")
         except Exception as e:
-            logging.error(f"Ошибка при очистке Excel: {str(e)}")
-            messagebox.showerror("Ошибка", f"Ошибка при очистке Excel: {str(e)}")
-        finally:
-            # Гарантированное освобождение ресурсов в правильном порядке
-            try:
-                if wb:
-                    wb.close()  # Закрываем без сохранения (изменения уже сохранены)
-            except Exception as e:
-                logging.warning(f"Ошибка при закрытии workbook: {str(e)}")
-
-            # Принудительное освобождение COM-объектов
-            # pythoncom.CoUninitialize()
-            del wb
-            time.sleep(0.9)  # Даем время системе освободить ресурсы
+            logging.error(f"Ошибка при очистке базы данных: {str(e)}")
 
     def clear_excel_file(self):
-        """Очищает указанные ячейки в Excel файле и сбрасывает цвет кнопок"""
+        """Очищает данные из базы данных"""
         try:
-            if not os.path.exists(self.excel_file):
-                logging.error(f"Файл не найден: {self.excel_file}")
-                messagebox.showerror("Ошибка", f"Файл не найден: {self.excel_file}")
-                return False
-
-            wb = load_workbook(self.excel_file)
-            ws = wb['current']
-
-            # Очистка диапазона A1:B16
-            for row in range(1, 17):  # Строки 1–16
-                for col in ['A', 'B']:
-                    cell = ws[f"{col}{row}"]
-                    if not isinstance(cell, MergedCell):
-                        cell.value = None
-
-            # Очистка конкретных ячеек
-            specific_cells = ['C14', 'C16', 'A19', 'A20', 'A23', 'C29', 'C34', 'J4']
-            for cell_address in specific_cells:
-                cell = ws[cell_address]
-                if not isinstance(cell, MergedCell):
-                    cell.value = None
-
-            # Очистка диапазонов B26:C28 и B31:C33
-            for row in range(26, 29):  # Строки 26–28
-                for col in ['B', 'C']:
-                    cell = ws[f"{col}{row}"]
-                    if not isinstance(cell, MergedCell):
-                        cell.value = None
-            for row in range(31, 34):  # Строки 31–33
-                for col in ['B', 'C']:
-                    cell = ws[f"{col}{row}"]
-                    if not isinstance(cell, MergedCell):
-                        cell.value = None
-
-            # Очистка столбцов D, E, F, G, H, I, L, M, N, O, Q, R, T, U, V, W, Y, Z
-            columns_to_clear = ['D', 'E', 'F', 'G', 'H', 'I', 'L', 'M', 'N', 'O', 'Q', 'R', 'T', 'U', 'V', 'W', 'Y',
-                                'Z']
-            for col in columns_to_clear:
-                for row in range(1, ws.max_row + 1):  # Все строки в столбце
-                    cell = ws[f"{col}{row}"]
-                    if not isinstance(cell, MergedCell):
-                        cell.value = None
-
-            wb.save(self.excel_file)
-
-            # Сбрасываем цвет всех кнопок
+            self.db.clear_data()
             self.reset_button_colors()
-
-            messagebox.showinfo("Успех", "данные успешно удалены")
+            messagebox.showinfo("Успех", "Данные успешно удалены")
             return True
-
         except Exception as e:
-            logging.error(f"Ошибка при очистке Excel: {str(e)}")
-            messagebox.showerror("Ошибка", f"Ошибка при очистке Excel: {str(e)}")
+            logging.error(f"Ошибка при очистке базы данных: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при очистке данных: {str(e)}")
             return False
-        finally:
-            # Гарантированное освобождение ресурсов
-            try:
-                if 'wb' in locals():
-                    wb.close()
-            except Exception as e:
-                logging.warning(f"Ошибка при закрытии workbook: {str(e)}")
 
     def reset_button_colors(self):
         """Сбрасывает цвет всех кнопок, которые были зелеными"""
@@ -2232,93 +2068,100 @@ class ReportGUI:
         return button_map.get(section)
 
     def paste_data_to_excel(self, data, section_number):
+        """Новая версия для работы с Access"""
         try:
-            # Очистка данных от недопустимых символов
-            data = clean_text(data)
-            self.log_invalid_characters(data)
-
-            # Загрузка Excel-файла
-            wb = load_workbook(self.excel_file)
-            ws = wb['current']
-
-            # Логирование: Проверяем исходные данные
-            # logging.info(f"Исходные данные из буфера обмена:\n{data}")
-
-            # Разделяем данные на строки и столбцы
+            # Разбираем данные из буфера обмена
             rows = [r.split('\t') for r in data.split('\n') if r.strip()]
-            # logging.info(f"Разобранные строки: {rows}")
 
             if not rows:
                 messagebox.showerror("Ошибка", "Нет данных для вставки")
-                return
+                return False
 
-            # Получаем ожидаемое количество столбцов
-            expected_cols = self.section_params[section_number]["expected_columns"]
-            logging.info(f"Ожидаемое количество столбцов: {expected_cols}")
-
-            # Проверяем количество столбцов в каждой строке
-            for row in rows:
-                if len(row) < expected_cols:
-                    row.extend([''] * (expected_cols - len(row)))  # Дополняем пустыми значениями
-                elif len(row) > expected_cols:
-                    messagebox.showerror(
-                        "Ошибка",
-                        f"Неверное количество столбцов. Ожидается {expected_cols}, получено {len(row)}."
-                    )
-                    return
-
-            # Определяем начальную ячейку
-            start_cell = self.section_params[section_number]["start_cell"]
-            start_row = int(''.join(filter(str.isdigit, start_cell)))
-            start_col = ord(''.join(filter(str.isalpha, start_cell)).upper()) - ord('A') + 1
-            print(f"Начальная ячейка: {start_cell} (строка={start_row}, столбец={start_col})")
-
-            # Вставка данных в Excel
-            for i, row in enumerate(rows):
-                for j, value in enumerate(row):
-                    value = value.strip()  # Удаляем лишние пробелы
-
-                    # Определяем текущие координаты ячейки
-                    current_row = start_row + i
-                    current_col = start_col + j
-                    cell_address = f"{chr(64 + current_col)}{current_row}"
-
-                    # Проверка на неподдерживаемые символы
-                    if any(ord(char) > 65535 for char in value):
-                        messagebox.showerror("Ошибка", f"Обнаружен неподдерживаемый символ: {value}")
-                        return
-
-                    # Особые ячейки - всегда вставляем как текст
-                    if cell_address in ['B4', 'B6', 'B7']:
-                        ws[cell_address] = str(value)
-                        logging.info(f"Вставка ТЕКСТА '{value}' в ячейку {cell_address}")
-                        continue
-
-                    try:
-                        # Преобразуем значение в число, если это возможно
-                        value = value.replace(',', '.') if ',' in value else value
-                        cell_value = float(value) if value else None  # Обрабатываем пустые значения
-                    except ValueError:
-                        cell_value = value  # Оставляем как текст, если преобразование не удалось
-
-                    # Логирование: Выводим значение для каждой ячейки
-                    # logging.info(f"Вставка значения '{cell_value}' в ячейку ({start_row + i}, {start_col + j})")
-
-                    # Записываем значение в ячейку
-                    ws.cell(row=start_row + i, column=start_col + j, value=cell_value)
-
-            # Сохраняем файл
-            wb.save(self.excel_file)
-            wb.close()
-            messagebox.showinfo("Успех", "Данные вставлены успешно")
+            # В зависимости от секции сохраняем данные в разные таблицы
+            if section_number == 1:  # Основные данные
+                self.process_main_data(rows)
+            elif section_number in [2, 5]:  # Модели
+                self.process_research_params(rows, section_number)
+            elif section_number in [3, 6]:  # Данные давления
+                self.process_pressure_data(rows, section_number)
 
             return True
 
         except Exception as e:
-            # Логирование: Выводим полное описание ошибки
-            logging.error(f"Произошла ошибка: {str(e)}")
-            messagebox.showerror("Ошибка", f"Ошибка при вставке данных: {str(e)}")
+            logging.error(f"Ошибка при вставке данных: {str(e)}")
             return False
+
+    def process_main_data(self, rows):
+        """Обрабатывает основные данные"""
+        # Преобразуем данные в словарь
+        data_dict = {}
+        for row in rows:
+            if len(row) >= 2:
+                key = row[0].strip()
+                value = row[1].strip()
+                if key and value:
+                    data_dict[key] = self.convert_value(value)
+
+        # Сохраняем в базу
+        main_data_id = self.db.insert_main_data(data_dict)
+        logging.info(f"Основные данные сохранены с ID: {main_data_id}")
+
+    def process_research_params(self, rows, section):
+        """Обрабатывает параметры исследования"""
+        params = {}
+        for row in rows:
+            if len(row) >= 2:
+                param_name = row[0].strip()
+                param_value = self.convert_value(row[1].strip())
+                if param_name and param_value is not None:
+                    params[param_name] = param_value
+
+        # Получаем ID последней записи
+        last_record = self.db.get_last_record()
+        if not last_record.empty:
+            main_data_id = last_record.iloc[0]['id']
+            self.db.insert_research_params(main_data_id, params)
+
+    def convert_value(self, value):
+        """Конвертирует строковое значение в соответствующий тип"""
+        if not value or value == '':
+            return None
+
+        # Пробуем преобразовать в число
+        try:
+            # Заменяем запятую на точку для чисел
+            value = value.replace(',', '.')
+            return float(value)
+        except ValueError:
+            pass
+
+        # Пробуем преобразовать в дату
+        try:
+            return datetime.strptime(value, '%d.%m.%Y').date()
+        except ValueError:
+            pass
+
+        # Оставляем как строку
+        return value
+
+    def update_main_data(self, record_id, data):
+        """Обновляет запись в main_data"""
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+
+            set_clause = ', '.join([f"{k} = ?" for k in data.keys()])
+            sql = f"UPDATE main_data SET {set_clause} WHERE id = ?"
+
+            params = list(data.values()) + [record_id]
+            cursor.execute(sql, params)
+            conn.commit()
+
+            logging.info(f"Запись {record_id} обновлена успешно")
+
+        except Exception as e:
+            logging.error(f"Ошибка обновления записи: {str(e)}")
+            raise
 
     def paste_research_params(self):
         try:
@@ -2431,13 +2274,29 @@ class ReportGUI:
             self.change_button_color(self.insert_button2_2, False)
 
     def save_to_excel(self):
+        """Сохраняет данные из полей ввода в базу"""
         try:
             if not self.class_entry.get() or not self.success_entry.get():
                 messagebox.showerror("Ошибка", "Заполните обязательные поля")
                 return
 
-            wb = load_workbook(self.excel_file)
-            ws = wb['current']
+            # Получаем последнюю запись
+            last_record = self.db.get_last_record()
+            if last_record.empty:
+                messagebox.showerror("Ошибка", "Нет основных данных для обновления")
+                return
+
+            main_data_id = last_record.iloc[0]['id']
+
+            # Подготавливаем данные для обновления
+            update_data = {
+                'klass': float(self.class_entry.get()),
+                'success': float(self.success_entry.get()),
+                'Durat': float(self.calc_time_entry.get()) if self.calc_time_entry.get() else None
+            }
+
+            # Добавляем поправки
+            corrections = {}
 
             # Сохраняем расчетное время в J4
             calc_time = self.calc_time_entry.get()
@@ -2478,18 +2337,17 @@ class ReportGUI:
             ws['A19'] = float(self.density_zab_entry.get()) if self.density_zab_entry.get() else None
             ws['A20'] = float(self.density_pl_entry.get()) if self.density_pl_entry.get() else None
 
-            wb.save(self.excel_file)
+            # Обновляем запись в базе
+            self.update_main_data(main_data_id, update_data)
+
+            # Сохраняем поправки
+            if corrections:
+                self.db.insert_corrections(main_data_id, corrections)
+
             messagebox.showinfo("Успех", "Данные сохранены успешно")
 
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка при сохранении: {str(e)}")
-        finally:
-            if wb is not None:
-                try:
-                    wb.close()
-                except:
-                    pass
-            self.kill_excel_processes()
 
     def select_output_file(self):
         self.output_file_path = filedialog.asksaveasfilename(
