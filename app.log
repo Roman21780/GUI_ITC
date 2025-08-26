@@ -1,1 +1,17 @@
-2025-08-25 12:58:32,795 - root - INFO - Вставленные данные: <bound method ReportGUI.paste_data of <__main__.ReportGUI object at 0x0000019F5F39E660>>
+2025-08-26 20:23:42,890 - utils - INFO - Успешное подключение к базе данных: C:\Work\GUI_ITC\research_data.accdb
+2025-08-26 20:23:51,662 - utils - WARNING - Таблица Parameters не найдена, пропускаем
+2025-08-26 20:24:02,606 - utils - INFO - Все данные из таблиц успешно удалены.
+2025-08-26 20:24:02,606 - root - INFO - База данных очищена при запуске
+Traceback (most recent call last):
+  File "C:\Work\GUI_ITC\GUI_Claudi_ITC.py", line 2203, in <module>
+    app = ReportGUI(root)
+  File "C:\Work\GUI_ITC\GUI_Claudi_ITC.py", line 1301, in __init__
+    self.setup_gui(self.scrollable_frame)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Work\GUI_ITC\GUI_Claudi_ITC.py", line 1364, in setup_gui
+    self.setup_tab1()
+    ~~~~~~~~~~~~~~~^^
+  File "C:\Work\GUI_ITC\GUI_Claudi_ITC.py", line 1419, in setup_tab1
+    command=self.paste_research_params
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'ReportGUI' object has no attribute 'paste_research_params'
