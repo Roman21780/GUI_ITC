@@ -1,13 +1,14 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import pyodbc
-from database import AccessDatabase
+from db_access import AccessDatabase
 
 import win32com.client
 from django.contrib.messages import success
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 import sys
+from utils import logger, logging
 from openpyxl.styles import numbers
 
 from docx.shared import Pt
@@ -32,20 +33,6 @@ from docx.shared import Inches
 import locale
 
 locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
-
-
-# Настройка логирования - перезаписываем файл при каждом запуске
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('app.log', mode='w', encoding='utf-8'),  # 'w' для перезаписи файла
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
-
-sys.stderr = open('app.log', 'a')
 
 
 def format_units(text):
@@ -308,57 +295,6 @@ def replace_and_format_table(doc, data):
     logger.info(f"Удалено строк: {len(rows_to_delete)}. Осталось строк: {len(table.rows)}")
 
 
-def replace_tags_perfectly(doc, data):
-    """
-    Идеальная замена меток:
-    - Находит даже разбитые метки
-    - Сохраняет форматирование
-    - Не трогает формулы и графики
-    """
-    # Обработка всех параграфов
-    for paragraph in doc.paragraphs:
-        _process_paragraph_perfect(paragraph, data, is_table=False)
-
-    # Обработка таблиц
-    for table in doc.tables:
-        for row in table.rows:
-            for col_idx, cell in enumerate(row.cells):
-                for paragraph in cell.paragraphs:
-                    _process_paragraph_perfect(paragraph, data, is_table=True, col_idx=col_idx)
-
-
-def _process_paragraph_perfect(paragraph, data, is_table, col_idx=None):
-    """Обработка параграфа с идеальной заменой меток"""
-    # Объединяем Runs чтобы найти разбитые метки
-    full_text = ''.join([run.text for run in paragraph.runs])
-
-    # Пропускаем если нет меток
-    if not any(tag in full_text for tag in data.keys()):
-        return
-
-    # Заменяем метки в полном тексте
-    for tag, value in data.items():
-        if tag in full_text:
-            full_text = full_text.replace(tag, str(value))
-
-    # Восстанавливаем форматирование
-    paragraph.clear()
-    new_run = paragraph.add_run(full_text)
-
-    # Базовое форматирование
-    new_run.font.size = Pt(12)
-    if is_table:
-        paragraph.alignment = (
-            WD_PARAGRAPH_ALIGNMENT.LEFT
-            if col_idx == 0
-            else WD_PARAGRAPH_ALIGNMENT.CENTER
-        )
-
-    # Восстанавливаем надстрочные символы
-    for char in ['²', '³', '⁴', '⁻']:
-        if char in full_text:
-            new_run.font.superscript = True
-
 
 # Функция замены меток (без форматирования единиц измерения)
 def replace_tags_only(doc, data):
@@ -552,76 +488,6 @@ def _process_paragraph_preserve(paragraph, data, is_table=False, col_idx=0):
         )
 
 
-def replace_tags_preserve_context(doc, data):
-    """
-    Заменяет метки в документе, сохраняя:
-    1. Исходное форматирование соседнего текста
-    2. Надстрочные/подстрочные символы
-    3. Стили шрифта
-    """
-    for paragraph in doc.paragraphs:
-        _process_paragraph_with_context(paragraph, data)
-
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    _process_paragraph_with_context(paragraph, data)
-
-
-def _process_paragraph_with_context(paragraph, data):
-    """Обрабатывает один параграф с сохранением контекста"""
-    # Сначала проверяем, есть ли вообще метки для замены
-    full_text = ''.join(run.text for run in paragraph.runs)
-    if not any(tag in full_text for tag in data.keys()):
-        return
-
-    # Собираем все Runs параграфа
-    original_runs = list(paragraph.runs)
-    paragraph.clear()
-
-    for run in original_runs:
-        original_text = run.text
-        remaining_text = original_text
-        new_runs = []
-
-        # Ищем метки в текущем Run
-        for tag in sorted(data.keys(), key=len, reverse=True):
-            if tag in remaining_text:
-                before, tag_found, remaining_text = remaining_text.partition(tag)
-
-                # Добавляем текст до метки с оригинальным форматированием
-                if before:
-                    new_run = paragraph.add_run(before)
-                    _copy_run_formatting(run, new_run)
-
-                # Добавляем замену для метки
-                replacement = str(data[tag])
-                new_run = paragraph.add_run(replacement)
-                _copy_run_formatting(run, new_run)
-
-                # Для числовых значений добавляем специальное форматирование
-                if isinstance(data[tag], (int, float)):
-                    new_run.font.name = 'Arial'
-                    new_run.font.size = Pt(12)
-
-        # Добавляем оставшийся текст
-        if remaining_text:
-            new_run = paragraph.add_run(remaining_text)
-            _copy_run_formatting(run, new_run)
-
-
-def _copy_run_formatting(source_run, target_run):
-    """Копирует все атрибуты форматирования из одного Run в другой"""
-    target_run.font.bold = source_run.font.bold
-    target_run.font.italic = source_run.font.italic
-    target_run.font.underline = source_run.font.underline
-    target_run.font.color.rgb = source_run.font.color.rgb
-    target_run.font.superscript = source_run.font.superscript
-    target_run.font.subscript = source_run.font.subscript
-    target_run.font.name = source_run.font.name
-    target_run.font.size = source_run.font.size
-
 
 def fix_split_runs(paragraph):
     """Объединяет разбитые Runs (если метка разорвана)"""
@@ -635,38 +501,6 @@ def fix_split_runs(paragraph):
     if paragraph.runs:
         first_run = paragraph.runs[0]
         first_run.font.size = Pt(12)
-
-
-def replace_tags_safely(doc, data):
-    """Заменяет метки, даже если они разбиты на несколько Run."""
-    # Обработка параграфов
-    for paragraph in doc.paragraphs:
-        fix_split_runs(paragraph)  # Сначала объединяем Run
-        for run in paragraph.runs:
-            for tag, value in data.items():
-                if tag in run.text:
-                    run.text = run.text.replace(tag, str(value))
-                    run.font.size = Pt(12)
-
-    # Обработка таблиц
-    for table in doc.tables:
-        for row_idx, row in enumerate(table.rows):
-            for col_idx, cell in enumerate(row.cells):
-                for paragraph in cell.paragraphs:
-                    fix_split_runs(paragraph)  # Объединяем Run
-
-                    # Устанавливаем выравнивание в зависимости от столбца
-                    if col_idx == 0:  # Первый столбец
-                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-                    else:  # Все остальные столбцы
-                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-
-                    # Замена меток
-                    for run in paragraph.runs:
-                        for tag, value in data.items():
-                            if tag in run.text:
-                                run.text = run.text.replace(tag, str(value))
-                                run.font.size = Pt(12)
 
 
 def normalize_text(text):
@@ -868,621 +702,401 @@ def generate_report_logic(doc, output_file_path, selected_template):
         logging.info(f"Output file path: {output_file_path}")
         logging.info(f"Selected template: {selected_template}")
 
-        """
-        Функция для формирования отчета на основе данных из Excel и шаблона Word.
-
-        :param output_path: Путь для сохранения выходного файла (отчета).
-        :param template_key: Ключ шаблона (например, "КВД_Заполярка").
-        """
         try:
+            db = AccessDatabase()
+            last_record = db.get_last_record()
 
+            if last_record.empty:
+                raise ValueError("Нет данных для формирования отчета")
 
-            # Инициализация переменных
-            excel_app = None
-            word_app = None
-            workbook = None
-            workbook2 = None
-            doc_word = None
+            main_data_id = last_record.iloc[0]['ID']
 
+            # Получаем все данные из базы
+            parameters = db.get_parameters(main_data_id)
+            research_params = db.get_research_params(main_data_id)
+            amendments = db.get_amendments(main_data_id)
+
+            # Объединяем все данные в один словарь
+            data = {}
+            # Добавляем основные данные
+            for column in last_record.columns:
+                value = last_record.iloc[0][column]
+                if pd.notna(value):
+                    data[column.lower()] = value
+
+            # Добавляем параметры, исследовательские параметры и поправки
+            data.update(parameters)
+            data.update(research_params)
+            data.update(amendments)
+
+            # Выбор шаблона Word
+            template_map = {
+                "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
+                "КВД_Оренбург": templates_path("KVD_Orenburg.docx"),
+                "КВД_Оренбург_газ": templates_path("KVD_Orenburg_gas.docx"),
+                "КВД_Оренбург2": templates_path("KVD_Orenburg2.docx"),
+                "КВД_Хантос": templates_path("KVD_Khantos.docx"),
+                "КВД_глушение": templates_path("KVD_For_Killing.docx"),
+                "КВД_ННГ": templates_path("KVD_NNG.docx"),
+                "КВД+ИД": templates_path("KVD_ID.docx"),
+                "КСД": templates_path("KSD.docx"),
+                "КПД": templates_path("KPD.docx"),
+                "КПД+ИД": templates_path("KPD_ID.docx"),
+                "ГРП": templates_path("GRP.docx")
+            }
+
+            # Преобразуем ключи в нижний регистр для сравнения
+            template_map_lower = {k.lower(): v for k, v in template_map.items()}
+
+            if selected_template.lower() in template_map_lower:
+                selected_template_file = template_map_lower[selected_template.lower()]
+            else:
+                raise ValueError(f"Неверное имя шаблона: {selected_template}. "
+                                 f"Доступные шаблоны: {list(template_map.keys())}")
+
+            # Добавление данных из предыдущего исследования --------------------------------------
             try:
+                field_name = data.get('field', '').replace(" ", "_").capitalize()
+                previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
+                previous_data_path = table_prev_path(previous_data_file)
 
-                db = AccessDatabase()
-                last_record = db.get_last_record()
+                if os.path.exists(previous_data_path):
+                    try:
+                        final_table_df = pd.read_excel(previous_data_path, skiprows=11)
+                        well_num = data.get('well', '').split()[0] if data.get('well') else ''
+                        logging.info(f"Скважина: {well_num}")
 
-                if last_record.empty:
-                    raise ValueError("Нет данных для формирования отчета")
+                        # Фильтруем данные по номеру скважины
+                        final_table_df['Скважина'] = final_table_df['Скважина'].astype(str).str.strip()
+                        final_table_df = final_table_df.dropna(subset=['Скважина'])
+                        filtered_data = final_table_df[final_table_df['Скважина'] == well_num]
 
-                # Преобразуем запись в словарь
-                data = {}
-                for column in last_record.columns:
-                    value = last_record.iloc[0][column]
-                    if pd.notna(value):
-                        data[column] = value
+                        if filtered_data.empty:
+                            logging.warning(f"Данные для скважины '{well_num}' не найдены в файле Excel.")
+                        else:
+                            # Обработка данных из файла
+                            pd.set_option('mode.use_inf_as_na', True)
+                            filtered_data.loc[:, 'Дата испытания'] = filtered_data['Дата испытания'].apply(
+                                lambda x: datetime.strptime(x, "%d.%m.%Y") if isinstance(x, str) else x
+                            )
 
-                # Выбор шаблона Word
-                template_map = {
-                    "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
-                    "КВД_Оренбург": templates_path("KVD_Orenburg.docx"),
-                    "КВД_Оренбург_газ": templates_path("KVD_Orenburg_gas.docx"),
-                    "КВД_Оренбург2": templates_path("KVD_Orenburg2.docx"),
-                    "КВД_Хантос": templates_path("KVD_Khantos.docx"),
-                    "КВД_глушение": templates_path("KVD_For_Killing.docx"),
-                    "КВД_ННГ": templates_path("KVD_NNG.docx"),
-                    "КВД+ИД": templates_path("KVD_ID.docx"),
-                    "КСД": templates_path("KSD.docx"),
-                    "КПД": templates_path("KPD.docx"),
-                    "КПД+ИД": templates_path("KPD_ID.docx"),
-                    "ГРП": templates_path("GRP.docx")
-                }
+                            latest_entry = filtered_data.loc[filtered_data['Дата испытания'].idxmax()]
 
+                            # Нормализуем строки в DataFrame
+                            final_table_df = final_table_df.map(
+                                lambda x: normalize_string(x) if isinstance(x, str) else x)
+                            # Нормализация названий столбцов в DataFrame
+                            final_table_df.columns = [normalize_string(col) for col in final_table_df.columns]
 
-                # Преобразуем ключи в нижний регистр для сравнения
-                template_map_lower = {k.lower(): v for k, v in template_map.items()}
+                            result_dict = {
+                                normalize_string('Рпл  на ВНК, кгс/см2'): latest_entry['Рпл  на ВНК, кгс/см2'],
+                                normalize_string('Рзаб  на ВНК, кгс/см2'): latest_entry['Рзаб  на ВНК, кгс/см2'],
+                                normalize_string('Дата испытания'): latest_entry['Дата испытания'].strftime("%d.%m.%Y"),
+                                normalize_string('% воды'): str(latest_entry['% воды']),
+                                normalize_string('Qж/Qг, м3/сут   '): str(latest_entry['Qж/Qг, м3/сут   ']),
+                                normalize_string('Кпрод. м3/сут*кгс/см2'): str(latest_entry['Кпрод. м3/сут*кгс/см2']),
+                                normalize_string('Скин-фактор механич./интегр.'): str(
+                                    latest_entry['Скин-фактор механич./интегр.']),
+                                normalize_string('Нэф., м.'): str(latest_entry['Нэф., м. ']),
+                                normalize_string('Кгидр., Д*см/сПз'): str(latest_entry['Кгидр., Д*см/сПз'])
+                            }
 
-                if selected_template.lower() in template_map_lower:
-                    selected_template_file = template_map_lower[selected_template.lower()]
+                            replace_tags_only(doc, result_dict)
+                            logging.info("Данные из файла предыдущих исследований успешно загружены.")
+
+                    except Exception as e:
+                        logging.error(f"Ошибка при чтении файла предыдущих данных Excel: {str(e)}")
+
                 else:
-                    raise ValueError(f"Неверное имя шаблона: {selected_template}. "
-                                     f"Доступные шаблоны: {list(template_map.keys())}")
-
-
-
-                # Добавление данных из предыдущего исследования --------------------------------------
-
-                try:
-                    field_name = data.get('field', '').replace(" ", "_").capitalize()
-                    previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
-                    previous_data_path = table_prev_path(previous_data_file)
-
-                    if os.path.exists(previous_data_path):
-
-                        # Если файл существует, пытаемся его прочитать
-                        try:
-                            final_table_df = pd.read_excel(previous_data_path, skiprows=11)
-                            well_num = sheet.Range('B3').Value.split()[0]
-                            logging.info(f"Скважина: {well_num}")
-
-                            # Фильтруем данные по номеру скважины
-                            final_table_df['Скважина'] = final_table_df['Скважина'].astype(str).str.strip()
-                            final_table_df = final_table_df.dropna(subset=['Скважина'])
-                            filtered_data = final_table_df[final_table_df['Скважина'] == well_num]
-
-                            if filtered_data.empty:
-                                logging.warning(f"Данные для скважины '{well_num}' не найдены в файле Excel.")
-                                filtered_data = None  # Устанавливаем filtered_data в None
-                            else:
-                                # Обработка данных из файла
-                                pd.set_option('mode.use_inf_as_na', True)
-                                filtered_data.loc[:, 'Дата испытания'] = filtered_data['Дата испытания'].apply(
-                                    lambda x: datetime.strptime(x, "%d.%m.%Y") if isinstance(x, str) else x
-                                )
-
-                                latest_entry = filtered_data.loc[filtered_data['Дата испытания'].idxmax()]
-
-                                p_pl_value = latest_entry['Рпл  на ВНК, кгс/см2']
-                                # if isinstance(p_pl_value, (int, float)):
-                                sheet.Range('A23').Value = float(p_pl_value)
-                                # else:
-                                #     print(f"Некорректное значение p_pl_value: {p_pl_value}")
-                                print(well_num)
-                                print(f'p_pl_value = {p_pl_value}')
-                                logging.info(f'p_pl_value = {p_pl_value}')
-
-                                workbook.Save()
-
-                                # Нормализуем строки в DataFrame
-                                final_table_df = final_table_df.map(
-                                    lambda x: normalize_string(x) if isinstance(x, str) else x)
-                                # Нормализация названий столбцов в DataFrame
-                                final_table_df.columns = [normalize_string(col) for col in final_table_df.columns]
-
-                                result_dict = {
-                                    normalize_string('Рпл  на ВНК, кгс/см2'): latest_entry['Рпл  на ВНК, кгс/см2'],
-                                    normalize_string('Рзаб  на ВНК, кгс/см2'): latest_entry['Рзаб  на ВНК, кгс/см2'],
-                                    normalize_string('Дата испытания'): latest_entry['Дата испытания'].strftime(
-                                        "%d.%m.%Y"),
-                                    normalize_string('% воды'): str(latest_entry['% воды']),
-                                    normalize_string('Qж/Qг, м3/сут   '): str(latest_entry['Qж/Qг, м3/сут   ']),
-                                    normalize_string('Кпрод. м3/сут*кгс/см2'): str(
-                                        latest_entry['Кпрод. м3/сут*кгс/см2']),
-                                    normalize_string('Скин-фактор механич./интегр.'): str(
-                                        latest_entry['Скин-фактор механич./интегр.']),
-                                    normalize_string('Нэф., м.'): str(latest_entry['Нэф., м. ']),
-                                    normalize_string('Кгидр., Д*см/сПз'): str(latest_entry['Кгидр., Д*см/сПз'])
-                                }
-
-                                print(result_dict)
-
-                                # replace_text_in_document(doc, result_dict)
-                                # replace_text_in_paragraphs(doc, result_dict)
-                                # replace_and_format_table(doc, result_dict)
-                                # replace_tags_safely(doc, result_dict)
-                                # replace_tags_perfectly(doc, result_dict)---
-                                # replace_plain_tags(doc, result_dict)
-                                # replace_tags_preserve_format(doc, result_dict)
-                                # replace_tags_preserve_context(doc, result_dict)
-                                replace_tags_only(doc, result_dict)
-
-                                logging.info("Данные из файла предыдущих исследований успешно загружены.")
-
-                        except Exception as e:
-                            logging.error(f"Ошибка при чтении файла предыдущих данных Excel: {str(e)}")
-
-                    else:
-                        # Если файл не найден, выводим сообщение и продолжаем выполнение программы
-                        logging.warning(f"Файл предыдущих данных не найден: {previous_data_path}")
-                        filtered_data = None  # Устанавливаем filtered_data в None
-                        logging.info("Для данного отчета не требуется файл с предыдущими данными.")
-
-                except Exception as e:
-                    logging.error(f"Ошибка при работе с историческими данными: {e}", exc_info=True)
-                    # Продолжаем формирование отчёта
-
-                workbook.Save()
-
-                # Создаем словарь data
-                result_day = calculate_r_difference(resource_path('Report.xlsx'))
-                if sheet.Range('B66').Value == "Горизонтальная с ГРП":
-                    Leff1 = round(sheet.Range('B118').Value) if sheet.Range('B118').Value else 0
-                else:
-                    Leff1 = round(sheet.Range('B84').Value) if sheet.Range('B84').Value else 0
-
-                KVD_density = round(sheet.Range('A20').Value, 3) if sheet.Range('A20').Value else 0
-                work_density = round(sheet.Range('A19').Value, 3) if sheet.Range('A19').Value else 0
-                if sheet.Range('A19').Value is None:
-                    density = f'{KVD_density} г/см3'
-                else:
-                    density = f'{KVD_density} г/см3 для пересчета участка КВД и {work_density} г/см3 - для пересчета цикла отработки скважины'
-
-                data = {
-                    "company": sheet.Range('B1').Value,
-                    "field": sheet.Range('B2').Value,
-                    "well": sheet.Range('B3').Value,
-                    "VNK": str(sheet.Range('B4').Value) if sheet.Range('B4').Value is not None else "",
-                    "date_research": convert_to_datetime(sheet.Range('B5').Value).strftime("%d.%m.%Y") if sheet.Range(
-                        'B5').Value else "",
-                    "date_researcf": convert_to_datetime(sheet.Range('C5').Value).strftime("%d.%m.%Y") if sheet.Range(
-                        'C5').Value else "",
-                    "formation": sheet.Range('B6').Value,
-                    "Plast1_H": sheet.Range('C6').Value,
-                    "Plast2_H": sheet.Range('C7').Value,
-                    "Plast3_H": sheet.Range('C8').Value,
-                    "Plast4_H": sheet.Range('C9').Value,
-                    "perforation_interval": str(sheet.Range('B7').Value) if sheet.Range('B7').Value is not None else "",
-                    "device": sheet.Range('B8').Value,
-                    "depth": sheet.Range('B9').Value,
-                    "interpreter": sheet.Range('B10').Value,
-                    "date_of_interpretation": convert_to_datetime(sheet.Range('C11').Value).strftime(
-                        "%d.%m.%Y") if sheet.Range(
-                        'C11').Value else "",
-                    "date_of_analiz": convert_to_datetime(sheet.Range('B11').Value).strftime("%d.%m.%Y") if sheet.Range(
-                        'B11').Value else "",
-                    "time": sheet.Range('B12').Value,
-                    "water": sheet.Range('B13').Value,
-                    "packer": sheet.Range('B14').Value,
-                    "date_GRP": convert_to_datetime(sheet.Range('B15').Value).strftime(
-                        "%d.%m.%Y") if convert_to_datetime(
-                        sheet.Range('B15').Value) else "",
-                    "type_of_research": sheet.Range('B16').Value,
-                    "H_eff": sheet.Range('B46').Value,
-                    "P_pl_zam": round(sheet.Range('B35').Value, 1) if sheet.Range('B35').Value else 0,
-                    "P_pl_vdp": round(sheet.Range('B36').Value, 1) if sheet.Range('B36').Value else 0,
-                    "P_pl_вдп2": round(sheet.Range('C36').Value, 1) if sheet.Range('C36').Value else 0,
-                    "P_pl_gnk": round(sheet.Range('B37').Value, 1) if sheet.Range('B37').Value else 0,
-                    "P_pl_vnk": round(sheet.Range('B38').Value, 1) if sheet.Range('B38').Value else 0,
-                    "P_pl_внк2": round(sheet.Range('C38').Value, 1) if sheet.Range('C38').Value else 0,
-                    "P_pl_внк3": round(sheet.Range('C30').Value, 1) if sheet.Range('C30').Value else 0,
-                    "P_pl_внк4": round(sheet.Range('C35').Value, 1) if sheet.Range('C35').Value else 0,
-                    "Durat": round(sheet.Range('J4').Value) if sheet.Range('J4').Value else 0,
-                    "duration": round(sheet.Range('B12').Value) if sheet.Range('B12').Value else 0,
-                    "density": density,
-                    "Qoil": round(sheet.Range('B20').Value, 1) if sheet.Range('B20').Value else 0,
-                    "klass": round(sheet.Range('C14').Value) if sheet.Range('C14').Value else 0,
-                    "success": round(sheet.Range('C16').Value) if sheet.Range('C16').Value else 0,
-                    "P_zab_zam": round(sheet.Range('B39').Value, 1) if sheet.Range('B39').Value else 0,
-                    "P_zab_vdp": round(sheet.Range('B40').Value, 1) if sheet.Range('B40').Value else 0,
-                    "P_zab_gnk": round(sheet.Range('B41').Value, 1) if sheet.Range('B41').Value else 0,
-                    "P1_zab_vnk": round(sheet.Range('B42').Value, 1) if sheet.Range('B42').Value else 0,
-                    "P1_zab_vn2": round(sheet.Range('C42').Value, 1) if sheet.Range('C42').Value else 0,
-                    "P2_zab_vnk": round(sheet.Range('B43').Value, 1) if sheet.Range('B43').Value else 0,
-                    "productivity": round(sheet.Range('C19').Value, 2) if sheet.Range('C19').Value else 0,
-                    "Kh/Mu": round(sheet.Range('B49').Value, 2) if sheet.Range('B49').Value else 0,
-                    "delta": abs(round(sheet.Range('B23').Value, 1)) if sheet.Range('B23').Value else 0,
-                    "Phi": round(sheet.Range('B62').Value, 2),
-                    "model": sheet.Range('B66').Value,
-                    "plast": sheet.Range('B67').Value,
-                    "layer": sheet.Range('B68').Value,
-                    "Cs": round(sheet.Range('B73').Value, 4) if sheet.Range('B73').Value else 0,
-                    "integ_skin1": round(sheet.Range('B74').Value, 2) if sheet.Range('B74').Value else 0,
-                    "integ_skin2": round(sheet.Range('C74').Value, 2) if sheet.Range('C74').Value else 0,
-                    "permeability1": round(sheet.Range('B90').Value, 2) if sheet.Range('B90').Value else 0,
-                    "Delta Q": round(sheet.Range('B100').Value, 1) if sheet.Range('B100').Value else 0,
-                    "B_oil": round(sheet.Range('B113').Value, 2) if sheet.Range('B113').Value else 0,
-                    "viscosity": round(sheet.Range('B114').Value, 3) if sheet.Range('B114').Value else 0,
-                    "Compressibility": f"{float(sheet.Range('B115').Value):.1E}" if sheet.Range('B115').Value else "0",
-                    "num_frac1": round(sheet.Range('B120').Value) if sheet.Range('B120').Value else 0,
-                    "num_frac2": round(sheet.Range('C120').Value) if sheet.Range('C120').Value else 0,
-                    "Xf1": round(sheet.Range('B121').Value) if sheet.Range('B121').Value else 0,
-                    "Xf2": round(sheet.Range('C121').Value) if sheet.Range('C121').Value else 0,
-                    "permeability2": round(sheet.Range('C90').Value, 2) if sheet.Range('C90').Value else 0,
-                    "S_мех1": round(float(sheet.Range('B81').Value), 2) if isinstance(sheet.Range('B81').Value,
-                                                                                      (int, float)) or (
-                                                                                   isinstance(sheet.Range('B81').Value,
-                                                                                              str) and sheet.Range(
-                                                                               'B81').Value.replace('.', '',
-                                                                                                    1).isdigit()) else 0,
-                    "S_мех2": round(float(sheet.Range('C81').Value), 2) if isinstance(sheet.Range('C81').Value,
-                                                                                      (int, float)) or (
-                                                                                   isinstance(sheet.Range('C81').Value,
-                                                                                              str) and sheet.Range(
-                                                                               'C81').Value.replace('.', '',
-                                                                                                    1).isdigit()) else 0,
-                    "S_геом1": round(float(sheet.Range('B82').Value), 2) if isinstance(sheet.Range('B82').Value,
-                                                                                      (int, float)) or (
-                                                                                   isinstance(sheet.Range('B82').Value,
-                                                                                              str) and sheet.Range(
-                                                                               'B82').Value.replace('.', '',
-                                                                                                    1).isdigit()) else 0,
-                    "S_геом2": round(float(sheet.Range('C82').Value), 2) if isinstance(sheet.Range('C82').Value,
-                                                                                      (int, float)) or (
-                                                                                   isinstance(sheet.Range('C82').Value,
-                                                                                              str) and sheet.Range(
-                                                                               'C82').Value.replace('.', '',
-                                                                                                    1).isdigit()) else 0,
-                    "P1_2500": round(sheet.Range('AF1').Value, 1) if sheet.Range('AF1').Value else 0,
-                    "P1_8760": round(sheet.Range('AF2').Value, 1) if sheet.Range('AF2').Value else 0,
-                    "P1_17500": round(sheet.Range('AF3').Value, 1) if sheet.Range('AF3').Value else 0,
-                    "P1_26280": round(sheet.Range('AF4').Value, 1) if sheet.Range('AF4').Value else 0,
-                    "P2_2500": round(sheet.Range('AF5').Value, 1) if sheet.Range('AF5').Value else 0,
-                    "P2_8760": round(sheet.Range('AF6').Value, 1) if sheet.Range('AF6').Value else 0,
-                    "P2_17500": round(sheet.Range('AF7').Value, 1) if sheet.Range('AF7').Value else 0,
-                    "P2_26280": round(sheet.Range('AF8').Value, 1) if sheet.Range('AF8').Value else 0,
-                    "Pday": round(result_day, 2) if result_day is not None else 0.0,
-                    "Leff1": Leff1,
-                    "Leff2": round(sheet.Range('C84').Value) if sheet.Range('C84').Value else 0,
-                    "Pzb_dlta": round(sheet.Range('C44').Value, 2) if sheet.Range('C44').Value else 0,
-                    "R_inv1": round(sheet.Range('B106').Value, 2) if sheet.Range('B106').Value else 0,
-                    "R_inv2": round(sheet.Range('C106').Value, 2) if sheet.Range('C106').Value else 0,
-                    "dens1": work_density,
-                    "dens2": KVD_density,
-                    "P_asa": round(sheet.Range('B137').Value, 1) if sheet.Range('B137').Value else 0,
-                    "Tzakr": round(sheet.Range('B127').Value, 2) if sheet.Range('B127').Value else 0,
-                    "Pzakr": round(sheet.Range('B128').Value, 1) if sheet.Range('B128').Value else 0,
-                    "ISIIP": round(sheet.Range('B129').Value, 1) if sheet.Range('B129').Value else 0,
-                    "Frac_eff": round(sheet.Range('B131').Value, 2) if sheet.Range('B131').Value else 0,
-                    "Mobil": round(sheet.Range('B139').Value, 1) if sheet.Range('B139').Value else 0,
-                    "Pi_1": round(sheet.Range('B77').Value, 2) if sheet.Range('B77').Value else 0,
-                    "Pi_2": round(sheet.Range('C77').Value, 2) if sheet.Range('C77').Value else 0,
-                    "Pi_12": round(sheet.Range('C25').Value, 2) if sheet.Range('C25').Value else 0,
-                    "P22_zab_vnk": round(sheet.Range('C39').Value, 2) if sheet.Range('C39').Value else 0,
-                    "P2_asa": round(sheet.Range('C137').Value, 2) if sheet.Range('C137').Value else 0,
-                    "Rinv_Ppl1": round(sheet.Range('B140').Value) if sheet.Range('B140').Value else 0,
-                    "µгаза1": round(sheet.Range('B141').Value, 4) if sheet.Range('B141').Value else 0,
-                    "Bg1": round(sheet.Range('B142').Value, 4) if sheet.Range('B142').Value else 0,
-                    "µгаза2": round(sheet.Range('C141').Value, 4) if sheet.Range('C141').Value else 0,
-                    "Bg2": round(sheet.Range('C142').Value, 4) if sheet.Range('C142').Value else 0,
-                    "fluid": sheet.Range('B58').Value,
-                    "Fc1": round(sheet.Range('B144').Value, 4) if sheet.Range('B144').Value else 0,
-                }
-
-                model_params = {
-                    "Вертикальная": {
-                        "additional_params": [],  # Нет дополнительных параметров
-                        "diagnostic_text": "model_descriptions.Вертикальная"
-                    },
-                    "Наклонн.": {
-                        "additional_params": [],  # Нет дополнительных параметров
-                        "diagnostic_text": "model_descriptions.Наклонн."
-                    },
-                    "Вертикальная - частичное вскрытие": {
-                        "additional_params": [
-                            {"name": "Скин-фактор механический", "value": data.get("S_мех1"),
-                             "key": "S_мех1"},
-                            {"name": "Скин-фактор геометрический", "value": data.get("S_геом1"),
-                             "key": "S_геом1"},
-                            {"name": "Эффективная часть интервала перфорации (hw), (м)",
-                             "value": data.get("Leff1"), "key": "Leff1"}
-                        ],
-                        "diagnostic_text": "model_descriptions.Вертикальная - частичное вскрытие"
-                    },
-                    "Горизонтальн.": {
-                        "additional_params": [
-                            {"name": "Скин-фактор механический", "value": data.get("S_мех1"),
-                             "key": "S_мех1"},
-                            {"name": "Эффективная длина скважины, (м)", "value": data.get("Leff1"),
-                             "key": "Leff1"}
-                        ],
-                        "diagnostic_text": "model_descriptions.Горизонтальн."
-                    },
-                    "Горизонтальная с ГРП": {
-                        "additional_params": [
-                            {"name": "Скин-фактор механический", "value": data.get("S_мех1"),
-                             "key": "S_мех1"},
-                            {"name": "Количество трещин", "value": data.get("num_frac1"),
-                             "key": "num_frac1"},
-                            {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
-                        ],
-                        "diagnostic_text": "model_descriptions.Горизонтальная с ГРП"
-                    },
-                    "Трещина - бесконечная проводимость": {
-                        "additional_params": [
-                            {"name": "Скин кольматации стенок трещины", "value": data.get("S_мех1"),
-                             "key": "S_мех1"},
-                            {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
-                        ],
-                        "diagnostic_text": "model_descriptions.Трещина - бесконечная проводимость"
-                    },
-                    "Трещина - конечная проводимость": {
-                        "additional_params": [
-                            {"name": "Скин кольматации стенок трещины", "value": data.get("S_мех1"),
-                             "key": "S_мех1"},
-                            {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"},
-                            {"name": "Проводимость трещины, (Fc)", "value": data.get("Fc1"),
-                             "key": "Fc1"}
-                        ],
-                        "diagnostic_text": "model_descriptions.Трещина - конечная проводимость"
-                    },
-                    "Трещина - равномерный поток": {
-                        "additional_params": [
-                            {"name": "Скин кольматации стенок трещины", "value": data.get("S_мех1"),
-                             "key": "S_мех1"},
-                            {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
-                        ],
-                        "diagnostic_text": "model_descriptions.Трещина - равномерный поток"
-                    }
-                }
-
-
-                # Вставка параметров модели в таблицу результатов
-                def insert_model_params_to_table(doc, model_name, data):
-                    """Вставляет параметры модели после строки 'Проницаемость, (мД)'"""
-                    table = find_results_table(doc)
-                    if not table:
-                        logging.error("Таблица результатов не найдена")
-                        return False
-
-                    params = model_params.get(model_name, {}).get("additional_params", [])
-                    if not params:
-                        logging.warning(f"Нет дополнительных параметров для модели {model_name}")
-                        return False
-
-                    # Находим индекс строки с "Проницаемость, (мД)"
-                    target_row_idx = -1
-                    for i, row in enumerate(table.rows):
-                        if row.cells and "Проницаемость, (мД)" in row.cells[0].text:
-                            target_row_idx = i
-                            break
-
-                    if target_row_idx == -1:
-                        logging.error("Строка 'Проницаемость, (мД)' не найдена в таблице")
-                        return False
-
-                    # Вставляем параметры после найденной строки
-                    for param in params:
-                        new_row = table.add_row()
-                        table.rows._tbl.insert(target_row_idx + 1, new_row._tr)
-                        target_row_idx += 1
-
-                        # Форматируем и вставляем данные
-                        name = format_units(param["name"])
-                        value = format_units(str(param["value"]))
-
-                        new_row.cells[0].text = name
-                        new_row.cells[1].text = value
-
-                        # Устанавливаем выравнивание
-                        for paragraph in new_row.cells[0].paragraphs:
-                            paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-                            set_font_size(paragraph, 12)
-
-                        for paragraph in new_row.cells[1].paragraphs:
-                            paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-                            set_font_size(paragraph, 12)
-
-                    logging.info(f"Успешно вставлено {len(params)} параметров модели")
-                    return True
-
-
-                # doc.save(output_file_path)
-
-                # Основной блок обработки документа
-                cell_value = str(sheet.Range('B66').Value).strip()
-
-                # Находим соответствующую модель
-                model_name = None
-                for key in model_params.keys():
-                    if cell_value.strip().lower() == key.strip().lower():
-                        model_name = key
-                        break
-
-                if model_name is None:
-                    for key in model_params.keys():
-                        if key.strip().lower() in cell_value.strip().lower():
-                            model_name = key
-                            break
-
-                if model_name is None:
-                    model_name = "Вертикальная"
-                    logging.warning(
-                        f"Предупреждение: Модель '{cell_value}' не найдена в model_params. Используется модель по умолчанию: {model_name}")
-
-                # Добавляем параметры модели в словарь data
-                model_data = model_params.get(model_name, {})
-                # diagnostic_text = model_data.get("diagnostic_text", "")
-
-                # Получаем текст описания непосредственно из TEXT_TEMPLATES
-                model_description = TEXT_TEMPLATES["model_descriptions"].get(model_name, "")
-                if not model_description:
-                    logging.warning(f"Описание для модели '{model_name}' не найдено в шаблонах")
-
-                data.update({
-                    "model_description": model_description,  # Используем текст напрямую из шаблонов
-                    "model_name": model_name,
-                    "diagnostic_text": model_description,  # Дублируем для совместимости
-                    **{f"param_{k}": v for k, v in enumerate(model_data.get("additional_params", []))},
-                })
-
-                replace_tags_only(doc, data)
-
-
-                logging.info("Метки в отчете успешно заменены на значения.")
-
-                # Специальная обработка diagnostic_text
-                for paragraph in doc.paragraphs:
-                    if "{{diagnostic_text}}" in paragraph.text:
-                        # Сохраняем форматирование первого run
-                        if paragraph.runs:
-                            original_font = paragraph.runs[0].font
-
-                        paragraph.text = paragraph.text.replace(
-                            "{{diagnostic_text}}",
-                            data["model_description"]
-                        )
-
-                        # Восстанавливаем форматирование
-                        if paragraph.runs and original_font:
-                            paragraph.runs[0].font.name = original_font.name
-                            paragraph.runs[0].font.size = original_font.size
-                            paragraph.runs[0].font.bold = original_font.bold
-                            paragraph.runs[0].font.italic = original_font.italic
-                            paragraph.runs[0].font.underline = original_font.underline
-                            if original_font.color.rgb:
-                                paragraph.runs[0].font.color.rgb = original_font.color.rgb
-
-                # Вставка параметров модели в таблицу
-                if not insert_model_params_to_table(doc, model_name, data):
-                    logging.warning("Не удалось вставить параметры модели в таблицу")
-
-                # Проверка и сохранение
-                if "{{diagnostic_text}}" in [p.text for p in doc.paragraphs]:
-                    logging.error("Метка diagnostic_text не была заменена!")
-                else:
-                    logging.info("метка diagnostic_text успешно заменена")
-
-                # Удаление лишних строк из таблицы результатов
-                replace_and_format_table(doc, data)
-                # fix_units(doc)
-
-                doc.save(output_file_path)
-                logging.info(f"Data dictionary content: {json.dumps(data, indent=2, ensure_ascii=False)}")
-                # Сохраняем результат
-                # output_file_path = os.path.join(output_directory,
-                #                                 f'Закл_{data["type_of_research"]}_{data["field"]}_{data["well"]}_{data["date_research"]}.doc')
-
-                # Внесение данных в Helper----------------------------------------------------------
-                try:
-                    excel = win32com.client.DispatchEx("Excel.Application")
-                    excel.Visible = False
-                    workbook = excel.Workbooks.Open(resource_path("Report.xlsx"))
-                    sheet = workbook.Sheets('current')
-
-                    logger.info("Начало обновления Helper.xlsm")
-
-                    new_row = {
-                        "Дата интерпретации": data.get("date_of_analiz"),
-                        "Дата начала исследования": data.get("date_research"),
-                        "Дата конца исследования": data.get("date_researcf"),
-                        "ДО": data.get("company"),
-                        "Месторождение": data.get("field"),
-                        "Пласт": data.get("formation"),
-                        "Куст": data.get("well").split()[2] if len(data.get("well", "").split()) > 1 else data.get(
-                            "well",
-                            ""),
-                        "№скв.": data.get("well").split()[0] if len(data.get("well", "").split()) > 1 else data.get(
-                            "well",
-                            ""),
-                        "Категория скважин": "доб",
-                        "Вид исследования": data.get("type_of_research"),
-                        "Исполнитель (организация)": "ИТС",
-                        "Интерпретатор": data.get("interpreter"),
-                        "Наличие в базе": "база",
-                        "Оборудование": data.get("device").split()[1] if len(
-                            data.get("device", "").split()) > 1 else data.get(
-                            "device",
-                            ""),
-                        "Назначение": "Запрос ДО",
-                        "Класс исследования": data.get("klass"),
-                        "Успешность": data.get("success"),
-                        "Длительность факт": data.get("duration"),
-                        "Qн": data.get("Qoil")
-                    }
-
-                    # Открытие файла Excel 2
-                    logging.info("Обновление Helper.xlsm")
-                    excel_helper = win32com.client.DispatchEx("Excel.Application")
-                    excel_helper.Visible = False
-                    excel_helper.DisplayAlerts = False
-
-                    excel_file_path_helper = resource_path("Helper.xlsm")
-                    if not os.path.exists(excel_file_path_helper):
-                        logger.warning(f"Файл Helper.xlsm не найден: {excel_file_path_helper}")
-                        return False
-
-                    # Открываем Helper.xlsm
-                    workbook2 = excel_helper.Workbooks.Open(excel_file_path_helper)
-                    sheet1 = workbook2.Sheets['Sheet1']
-
-                    # Находим первую полностью пустую строку
-                    # empty_row_index = find_first_empty_row(sheet1)
-                    empty_row_index = sheet1.Cells(sheet1.Rows.Count, 4).End(
-                        -4162).Row + 1  # -4162 is the constant for xlUp
-
-                    # Добавляем значения из словаря в соответствующие столбцы
-                    for key, value in new_row.items():
-                        # Получаем индекс столбца по имени
-                        column_index = None
-                        for col in sheet1.Range(sheet1.Cells(1, 1), sheet1.Cells(1, sheet1.Columns.Count)).Columns:
-                            if col.Cells(1, 1).Value == key:
-                                column_index = col.Cells(1, 1).Column
-                                break
-
-                        # Если столбец найден, добавляем значение
-                        if column_index is not None:
-                            sheet1.Cells(empty_row_index, column_index).Value = value
-
-                    # Сохраняем книгу с поддержкой макросов
-                    workbook2.Save()  # FileFormat=52 - это код для формата .xlsm
-                    logger.info("Данные успешно записаны в Helper.xlsm")
-
-                except Exception as e:
-                    logger.error(f"Ошибка при работе с Helper.xlsm: {str(e)}")
-                finally:
-                    if 'workbook' in locals() and workbook is not None:
-                        try:
-                            workbook.Close(SaveChanges=False)
-                        except Exception as e:
-                            logging.warning(f"Ошибка при закрытии Workbook: {str(e)}")
-
-                    if 'workbook2' in locals() and workbook2:
-                        try:
-                            workbook2.Close(SaveChanges=True)
-                        except Exception as e:
-                            logging.warning(f"Ошибка при закрытии Workbook2 (Helper.xlsm): {str(e)}")
-                    excel_helper = None
-                    excel = None
-                    workbook = None  # Обнуляем ссылки
-                    workbook2 = None
-
-                    # safe_quit_office(excel_file_path_helper, False)
-                logger.info("Отчет успешно сформирован!")
+                    logging.warning(f"Файл предыдущих данных не найден: {previous_data_path}")
+                    logging.info("Для данного отчета не требуется файл с предыдущими данными.")
 
             except Exception as e:
-                logging.error(f"Ошибка при работе с Helper.xlsm: {str(e)}", exc_info=True)
-                raise RuntimeError(f"Ошибка формирования отчета: {str(e)}")
+                logging.error(f"Ошибка при работе с историческими данями: {e}", exc_info=True)
 
+            # Расчет плотности
+            KVD_density = data.get('dens2', 0)
+            work_density = data.get('dens1', 0)
+            if not work_density:
+                density = f'{KVD_density} г/см3'
+            else:
+                density = f'{KVD_density} г/см3 для пересчета участка КВД и {work_density} г/см3 - для пересчета цикла отработки скважины'
+
+            # Добавляем density в данные
+            data['density'] = density
+
+            # Расчет Leff1 в зависимости от модели
+            model_value = data.get('model', '')
+            if model_value == "Горизонтальная с ГРП":
+                Leff1 = round(data.get('Leff1', 0))
+            else:
+                Leff1 = round(data.get('Leff1', 0))
+
+            # Добавляем Leff1 в данные
+            data['Leff1'] = Leff1
+
+            model_params = {
+                "Вертикальная": {
+                    "additional_params": [],
+                    "diagnostic_text": "model_descriptions.Вертикальная"
+                },
+                "Наклонн.": {
+                    "additional_params": [],
+                    "diagnostic_text": "model_descriptions.Наклонн."
+                },
+                "Вертикальная - частичное вскрытие": {
+                    "additional_params": [
+                        {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
+                        {"name": "Скин-фактор геометрический", "value": data.get("S_geom1"), "key": "S_geom1"},
+                        {"name": "Эффективная часть интервала перфорации (hw), (м)", "value": data.get("Leff1"),
+                         "key": "Leff1"}
+                    ],
+                    "diagnostic_text": "model_descriptions.Вертикальная - частичное вскрытие"
+                },
+                "Горизонтальн.": {
+                    "additional_params": [
+                        {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
+                        {"name": "Эффективная длина скважины, (м)", "value": data.get("Leff1"), "key": "Leff1"}
+                    ],
+                    "diagnostic_text": "model_descriptions.Горизонтальн."
+                },
+                "Горизонтальная с ГРП": {
+                    "additional_params": [
+                        {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
+                        {"name": "Количество трещин", "value": data.get("num_frac1"), "key": "num_frac1"},
+                        {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
+                    ],
+                    "diagnostic_text": "model_descriptions.Горизонтальная с ГРП"
+                },
+                "Трещина - бесконечная проводимость": {
+                    "additional_params": [
+                        {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
+                        {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
+                    ],
+                    "diagnostic_text": "model_descriptions.Трещина - бесконечная проводимость"
+                },
+                "Трещина - конечная проводимость": {
+                    "additional_params": [
+                        {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
+                        {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"},
+                        {"name": "Проводимость трещины, (Fc)", "value": data.get("Fc1"), "key": "Fc1"}
+                    ],
+                    "diagnostic_text": "model_descriptions.Трещина - конечная проводимость"
+                },
+                "Трещина - равномерный поток": {
+                    "additional_params": [
+                        {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
+                        {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
+                    ],
+                    "diagnostic_text": "model_descriptions.Трещина - равномерный поток"
+                }
+            }
+
+            # Вставка параметров модели в таблицу результатов
+            def insert_model_params_to_table(doc, model_name, data):
+                """Вставляет параметры модели после строки 'Проницаемость, (мД)'"""
+                table = find_results_table(doc)
+                if not table:
+                    logging.error("Таблица результатов не найдена")
+                    return False
+
+                params = model_params.get(model_name, {}).get("additional_params", [])
+                if not params:
+                    logging.warning(f"Нет дополнительных параметров для модели {model_name}")
+                    return False
+
+                # Находим индекс строки с "Проницаемость, (мД)"
+                target_row_idx = -1
+                for i, row in enumerate(table.rows):
+                    if row.cells and "Проницаемость, (мД)" in row.cells[0].text:
+                        target_row_idx = i
+                        break
+
+                if target_row_idx == -1:
+                    logging.error("Строка 'Проницаемость, (мД)' не найдена в таблице")
+                    return False
+
+                # Вставляем параметры после найденной строки
+                for param in params:
+                    new_row = table.add_row()
+                    table.rows._tbl.insert(target_row_idx + 1, new_row._tr)
+                    target_row_idx += 1
+
+                    # Форматируем и вставляем данные
+                    name = format_units(param["name"])
+                    value = format_units(str(param["value"]))
+
+                    new_row.cells[0].text = name
+                    new_row.cells[1].text = value
+
+                    # Устанавливаем выравнивание
+                    for paragraph in new_row.cells[0].paragraphs:
+                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+                        set_font_size(paragraph, 12)
+
+                    for paragraph in new_row.cells[1].paragraphs:
+                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                        set_font_size(paragraph, 12)
+
+                logging.info(f"Успешно вставлено {len(params)} параметров модели")
+                return True
+
+            # Основной блок обработки документа
+            model_value = data.get('model', '')
+            model_name = None
+
+            # Находим соответствующую модель
+            for key in model_params.keys():
+                if model_value and key.strip().lower() in model_value.strip().lower():
+                    model_name = key
+                    break
+
+            if model_name is None:
+                model_name = "Вертикальная"
+                logging.warning(
+                    f"Предупреждение: Модель '{model_value}' не найдена в model_params. Используется модель по умолчанию: {model_name}")
+
+            # Добавляем параметры модели в словарь data
+            model_data = model_params.get(model_name, {})
+            model_description = TEXT_TEMPLATES["model_descriptions"].get(model_name, "")
+
+            if not model_description:
+                logging.warning(f"Описание для модели '{model_name}' не найдено в шаблонах")
+
+            data.update({
+                "model_description": model_description,
+                "model_name": model_name,
+                "diagnostic_text": model_description,
+                **{f"param_{k}": v for k, v in enumerate(model_data.get("additional_params", []))},
+            })
+
+            replace_tags_only(doc, data)
+            logging.info("Метки в отчете успешно заменены на значения.")
+
+            # Специальная обработка diagnostic_text
+            for paragraph in doc.paragraphs:
+                if "{{diagnostic_text}}" in paragraph.text:
+                    if paragraph.runs:
+                        original_font = paragraph.runs[0].font
+
+                    paragraph.text = paragraph.text.replace("{{diagnostic_text}}", data["model_description"])
+
+                    if paragraph.runs and original_font:
+                        paragraph.runs[0].font.name = original_font.name
+                        paragraph.runs[0].font.size = original_font.size
+                        paragraph.runs[0].font.bold = original_font.bold
+                        paragraph.runs[0].font.italic = original_font.italic
+                        paragraph.runs[0].font.underline = original_font.underline
+                        if original_font.color.rgb:
+                            paragraph.runs[0].font.color.rgb = original_font.color.rgb
+
+            # Вставка параметров модели в таблицу
+            if not insert_model_params_to_table(doc, model_name, data):
+                logging.warning("Не удалось вставить параметры модели в таблицу")
+
+            # Проверка и сохранение
+            if "{{diagnostic_text}}" in [p.text for p in doc.paragraphs]:
+                logging.error("Метка diagnostic_text не была заменена!")
+            else:
+                logging.info("метка diagnostic_text успешно заменена")
+
+            # Удаление лишних строк из таблицы результатов
+            replace_and_format_table(doc, data)
+
+            doc.save(output_file_path)
+            logging.info(f"Data dictionary content: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+            # Внесение данных в Helper----------------------------------------------------------
+            try:
+                logger.info("Начало обновления Helper.xlsm")
+
+                if data.get("type_of_research") in ["КВД", "КВУ", "КСД", "ИК+КВУ", "ИК+КВД", "ГРП", "ГДП", "ИД+КВД"]:
+                    category = "доб"
+                else:
+                    category = "нагн"
+
+                new_row = {
+                    "Дата интерпретации": data.get("date_of_analiz"),
+                    "Дата начала исследования": data.get("date_research"),
+                    "Дата конца исследования": data.get("date_researcf"),
+                    "ДО": data.get("company"),
+                    "Месторождение": data.get("field"),
+                    "Пласт": data.get("formation"),
+                    "Куст": data.get("well", "").split()[2] if len(data.get("well", "").split()) > 2 else data.get(
+                        "well", ""),
+                    "№скв.": data.get("well", "").split()[0] if data.get("well") else data.get("well", ""),
+                    "Категория скважин": category,
+                    "Вид исследования": data.get("type_of_research"),
+                    "Исполнитель (организация)": "ИТС",
+                    "Интерпретатор": data.get("interpreter"),
+                    "Наличие в базе": "база",
+                    "Оборудование": data.get("device", "").split()[1] if len(
+                        data.get("device", "").split()) > 1 else data.get("device", ""),
+                    "Назначение": "Запрос ДО",
+                    "Класс исследования": data.get("klass"),
+                    "Успешность": data.get("success"),
+                    "Длительность факт": data.get("duration"),
+                    "Qн": data.get("Qoil")
+                }
+
+                # Открытие файла Excel
+                logging.info("Обновление Helper.xlsm")
+                excel_helper = win32com.client.DispatchEx("Excel.Application")
+                excel_helper.Visible = False
+                excel_helper.DisplayAlerts = False
+
+                excel_file_path_helper = resource_path("Helper.xlsm")
+                if not os.path.exists(excel_file_path_helper):
+                    logger.warning(f"Файл Helper.xlsm не найден: {excel_file_path_helper}")
+                    return False
+
+                # Открываем Helper.xlsm
+                workbook = excel_helper.Workbooks.Open(excel_file_path_helper)
+                sheet1 = workbook.Sheets['Sheet1']
+
+                # Находим первую полностью пустую строку
+                empty_row_index = sheet1.Cells(sheet1.Rows.Count, 4).End(-4162).Row + 1
+
+                # Добавляем значения из словаря в соответствующие столбцы
+                for key, value in new_row.items():
+                    column_index = None
+                    for col in sheet1.Range(sheet1.Cells(1, 1), sheet1.Cells(1, sheet1.Columns.Count)).Columns:
+                        if col.Cells(1, 1).Value == key:
+                            column_index = col.Cells(1, 1).Column
+                            break
+
+                    if column_index is not None:
+                        sheet1.Cells(empty_row_index, column_index).Value = value
+
+                # Сохраняем книгу
+                workbook.Save()
+                logger.info("Данные успешно записаны в Helper.xlsm")
+
+            except Exception as e:
+                logger.error(f"Ошибка при работе с Helper.xlsm: {str(e)}")
             finally:
-                if db:
-                    db.close()
+                if 'workbook' in locals() and workbook is not None:
+                    try:
+                        workbook.Close(SaveChanges=True)
+                    except Exception as e:
+                        logging.warning(f"Ошибка при закрытии Workbook: {str(e)}")
+                if excel_helper:
+                    excel_helper.Quit()
+
+            logger.info("Отчет успешно сформирован!")
+            return True
 
         except Exception as e:
-            logger.error(f"Ошибка при формировании отчета: {str(e)}")
+            logging.error(f"Ошибка при формировании отчета: {str(e)}", exc_info=True)
             raise RuntimeError(f"Ошибка при формировании отчета: {str(e)}")
 
-        return True
+        finally:
+            if db:
+                db.close()
 
     except Exception as e:
         import traceback
-        traceback.print_exc()  # Вывод полного стека ошибки
+        traceback.print_exc()
         logging.error(f"Ошибка при формировании отчета: {str(e)}", exc_info=True)
         return False
 
@@ -1630,14 +1244,11 @@ class ReportGUI:
         # Проверка наличия python312.dll
         if getattr(sys, 'frozen', False):
             sys._MEIPASS = os.path.normpath(sys._MEIPASS)
-        #     print(f"Путь к python312.dll: {os.path.join(sys._MEIPASS, 'python312.dll')}")
-        #     if not os.path.exists(os.path.join(sys._MEIPASS, 'python312.dll')):
-        #         raise FileNotFoundError("Файл python312.dll не найден!")
 
         self.pdf_path = None
         self.output_file_path = None
         self.root.title("Параметры проекта")
-        self.root.minsize(900, 600)  # Уменьшен размер окна
+        self.root.minsize(900, 600)
 
         self.color_buttons = []
 
@@ -1672,6 +1283,7 @@ class ReportGUI:
 
         self.base_dir = os.path.dirname(__file__)
 
+        # Инициализация базы данных
         self.db = AccessDatabase()
 
         self.section_params = {
@@ -1683,8 +1295,8 @@ class ReportGUI:
             6: {"start_cell": "Y1", "expected_columns": 2, "description": "Данные давления_2"}
         }
 
-        # Очистка Excel-файла при запуске
-        self.clear_excel_on_startup()
+        # Очистка базы данных при запуске
+        self.clear_database_on_startup()
 
         self.setup_gui(self.scrollable_frame)
 
@@ -1700,36 +1312,44 @@ class ReportGUI:
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    def clear_excel_on_startup(self):
-        """Теперь очищаем базу данных вместо Excel"""
+    def clear_database_on_startup(self):
+        """Очищает базу данных при запуске приложения"""
         try:
-            self.db.clear_data()
-            logging.info("База данных очищена при запуске")
+            success = self.db.clear_data()  # Теперь этот метод существует
+            if success:
+                logging.info("База данных очищена при запуске")
+            else:
+                logging.error("Не удалось очистить базу данных")
         except Exception as e:
             logging.error(f"Ошибка при очистке базы данных: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при очистке базы данных: {str(e)}")
 
-    def clear_excel_file(self):
-        """Очищает данные из базы данных"""
+    def clear_database(self):
+        """Очищает базу данных и сбрасывает цвет кнопок"""
         try:
-            self.db.clear_data()
-            self.reset_button_colors()
-            messagebox.showinfo("Успех", "Данные успешно удалены")
-            return True
+            success = self.db.clear_data()
+            if success:
+                self.reset_button_colors()
+                messagebox.showinfo("Успех", "Данные успешно удалены из базы данных")
+                return True
+            else:
+                messagebox.showerror("Ошибка", "Не удалось очистить базу данных")
+                return False
         except Exception as e:
             logging.error(f"Ошибка при очистке базы данных: {str(e)}")
-            messagebox.showerror("Ошибка", f"Ошибка при очистке данных: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при очистке базы данных: {str(e)}")
             return False
 
     def reset_button_colors(self):
         """Сбрасывает цвет всех кнопок, которые были зелеными"""
         for button in self.color_buttons:
             button.config(style="TButton")
-        # Очищаем список
         self.color_buttons = []
 
     def on_close(self):
         """Обработчик закрытия приложения"""
-        # self.kill_excel_processes()
+        if hasattr(self, 'db'):
+            self.db.close()
         self.root.destroy()
 
     def setup_gui(self, parent):
@@ -1761,8 +1381,6 @@ class ReportGUI:
                                                                                   self.change_button_color(
                                                                                       self.insert_button)])
         self.insert_button.pack(padx=3, pady=3)
-
-        logging.info(f"Вставленные данные: {self.paste_data}")
 
         # Класс исследования
         frame2 = self.create_labeled_frame(self.tab1, "2. Класс исследования")
@@ -1945,28 +1563,22 @@ class ReportGUI:
 
         ttk.Label(template_frame, text="Шаблон:").pack(side='left', padx=3)
         self.template_var = tk.StringVar()
-        self.template_combobox = ttk.Combobox(template_frame, textvariable=self.template_var, state="readonly",
-                                              width=15)
+        self.template_combobox = ttk.Combobox(template_frame, textvariable=self.template_var, state="readonly", width=15)
         self.template_combobox['values'] = (
-            "КВД_Заполярка", "КВД_Оренбург", "КВД_Оренбург_газ", "КВД_Оренбург2", "КВД_Хантос", "КВД_глушение", "КВД_ННГ", "КВД+ИД", "КСД",
-            "КПД", "КПД+ИД",
-            "ГРП"
+            "КВД_Заполярка", "КВД_Оренбург", "КВД_Оренбург_газ", "КВД_Оренбург2",
+            "КВД_Хантос", "КВД_глушение", "КВД_ННГ", "КВД+ИД", "КСД",
+            "КПД", "КПД+ИД", "ГРП"
         )
         self.template_combobox.current(0)
         self.template_combobox.pack(side='left', padx=3)
 
-        # Добавляем кнопку очистки Excel
         clear_btn = ttk.Button(
             button_frame,
             text="Очистить данные",
-            command=self.clear_excel_file
+            command=self.clear_database
         )
         clear_btn.pack(side='right', padx=100)
 
-        # NEW: Добавлены переменные для кнопок
-        # self.select_button = ttk.Button(button_frame, text="Выбрать место сохранения отчета",
-        #                                 command=lambda: [self.select_output_file(),
-        #                                                  self.change_button_color(self.select_button)])
         self.select_button = ttk.Button(
             button_frame,
             text="Выбрать папку для сохранения",
@@ -1974,9 +1586,7 @@ class ReportGUI:
         )
         self.select_button.pack(side='left', padx=5)
 
-        self.save_button = ttk.Button(button_frame, text="Сохранить внесенные данные",
-                                      command=lambda: [self.save_to_excel(),
-                                                       self.change_button_color(self.save_button)])
+        self.save_button = ttk.Button(button_frame, text="Сохранить внесенные данные", command=self.save_to_db)
         self.save_button.pack(side='left', padx=5)
 
         generate_btn = ttk.Button(button_frame, text="Формировать отчет", command=self.generate_report)
@@ -2043,7 +1653,7 @@ class ReportGUI:
             # Очистка данных от недопустимых символов
             clipboard_data = clean_text(clipboard_data)
 
-            success = self.paste_data_to_excel(clipboard_data, section)
+            success = self.paste_data_to_db(clipboard_data, section)
 
             # Меняем цвет кнопки в зависимости от успеха
             button = self.get_button_by_section(section)
@@ -2067,32 +1677,101 @@ class ReportGUI:
         }
         return button_map.get(section)
 
-    def paste_data_to_excel(self, data, section_number):
-        """Новая версия для работы с Access"""
+    def paste_data_to_db(self, data, section_number):
+        """Вставляет данные в соответствующие таблицы БД"""
         try:
-            # Разбираем данные из буфера обмена
+            data = clean_text(data)
             rows = [r.split('\t') for r in data.split('\n') if r.strip()]
 
             if not rows:
                 messagebox.showerror("Ошибка", "Нет данных для вставки")
                 return False
 
-            # В зависимости от секции сохраняем данные в разные таблицы
+            # Получаем ID последней записи
+            last_record = self.db.get_last_record()
+            if last_record.empty:
+                messagebox.showerror("Ошибка", "Сначала вставьте основные данные!")
+                return False
+            main_data_id = last_record.iloc[0]['ID']
+
             if section_number == 1:  # Основные данные
                 self.process_main_data(rows)
-            elif section_number in [2, 5]:  # Модели
-                self.process_research_params(rows, section_number)
-            elif section_number in [3, 6]:  # Данные давления
-                self.process_pressure_data(rows, section_number)
+            elif section_number == 2:  # Модель
+                self.process_model_data(rows, main_data_id)
+            elif section_number == 3:  # Давление
+                self.process_pressure_data(rows, main_data_id)
+            elif section_number == 4:  # Параметры
+                self.process_parameters_data(rows, main_data_id)
+            elif section_number == 5:  # Модель_2
+                self.process_model_data(rows, main_data_id, "_2")
+            elif section_number == 6:  # Давление_2
+                self.process_pressure_data(rows, main_data_id, "_2")
 
             return True
 
         except Exception as e:
             logging.error(f"Ошибка при вставке данных: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при вставке данных: {str(e)}")
             return False
 
+    def process_parameters_data(self, rows, main_data_id):
+        """Обрабатывает параметры исследования"""
+        params = {}
+        for row in rows:
+            if len(row) >= 2:
+                param_name = row[0].strip()
+                param_value = self.convert_value(row[1].strip())
+                if param_name and param_value is not None:
+                    params[param_name] = param_value
+
+        try:
+            self.db.insert_calculated_parameters(main_data_id, params)
+            messagebox.showinfo("Успех", "Параметры исследования сохранены в БД")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при сохранении параметров: {str(e)}")
+
+
+    def save_to_db(self):
+        """Сохраняет данные из полей ввода в БД"""
+        try:
+            if not self.class_entry.get() or not self.success_entry.get():
+                messagebox.showerror("Ошибка", "Заполните обязательные поля")
+                return
+
+            # Получаем ID последней записи
+            last_record = self.db.get_last_record()
+            if last_record.empty:
+                messagebox.showerror("Ошибка", "Нет основных данных для обновления")
+                return
+            main_data_id = last_record.iloc[0]['ID']
+
+            # Сохраняем класс исследования
+            self.db.insert_research_class(main_data_id, self.class_entry.get())
+
+            # Сохраняем успешность
+            self.db.insert_success(main_data_id, self.success_entry.get())
+
+            # Сохраняем плотность
+            self.db.insert_density(main_data_id,
+                                   self.density_zab_entry.get() or 0,
+                                   self.density_pl_entry.get() or 0)
+
+            # Сохраняем расчетное время
+            if self.calc_time_entry.get():
+                self.db.insert_estimated_time(main_data_id, self.calc_time_entry.get())
+
+            # Сохраняем поправки
+            amendments_dict = {}
+            # ... логика заполнения amendments_dict из полей поправок ...
+            self.db.insert_amendments(main_data_id, amendments_dict)
+
+            messagebox.showinfo("Успех", "Все данные сохранены в базу данных")
+
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Ошибка при сохранении: {str(e)}")
+
     def process_main_data(self, rows):
-        """Обрабатывает основные данные"""
+        """Обрабатывает основные данные (секция 1) и сохраняет в базу"""
         # Преобразуем данные в словарь
         data_dict = {}
         for row in rows:
@@ -2103,11 +1782,23 @@ class ReportGUI:
                     data_dict[key] = self.convert_value(value)
 
         # Сохраняем в базу
-        main_data_id = self.db.insert_main_data(data_dict)
-        logging.info(f"Основные данные сохранены с ID: {main_data_id}")
+        try:
+            main_data_id = self.db.insert_main_data(data_dict)
+            logging.info(f"Основные данные сохранены с ID: {main_data_id}")
 
-    def process_research_params(self, rows, section):
-        """Обрабатывает параметры исследования"""
+            # Сохраняем ID для использования в других методах
+            self.current_main_data_id = main_data_id  # Исправлено: атрибут определен в __init__
+
+            messagebox.showinfo("Успех", "Основные данные сохранены в базу данных")
+            return main_data_id
+
+        except Exception as e:
+            logging.error(f"Ошибка при сохранении основных данных: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
+            return None
+
+    def process_model_data(self, rows, section):
+        """Обрабатывает данные модели (секция 2 или 5)"""
         params = {}
         for row in rows:
             if len(row) >= 2:
@@ -2116,12 +1807,54 @@ class ReportGUI:
                 if param_name and param_value is not None:
                     params[param_name] = param_value
 
-        # Получаем ID последней записи
-        last_record = self.db.get_last_record()
-        if not last_record.empty:
-            main_data_id = last_record.iloc[0]['id']
-            self.db.insert_research_params(main_data_id, params)
+        # Используем последнюю запись или явно переданный ID
+        main_data_id = getattr(self, 'current_main_data_id', None)
+        if main_data_id is None:
+            last_record = self.db.get_last_record()
+            if not last_record.empty:
+                main_data_id = last_record.iloc[0]['id']  # Исправлено: 'id' вместо 'ID'
+            else:
+                logging.error("Нет основной записи для привязки параметров модели")
+                messagebox.showerror("Ошибка", "Сначала вставьте основные данные!")
+                return
 
+        try:
+            # Исправленный вызов метода
+            self.db.insert_research_params(main_data_id, section, params)
+            messagebox.showinfo("Успех", "Параметры модели сохранены в базу данных")
+        except Exception as e:
+            logging.error(f"Ошибка при сохранении параметров модели: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при сохранении параметров: {str(e)}")
+
+    def process_pressure_data(self, rows, section):
+        """Обрабатывает данные давления (секция 3 или 6)"""
+        params = {}
+        for row in rows:
+            if len(row) >= 2:
+                param_name = row[0].strip()
+                param_value = self.convert_value(row[1].strip())
+                if param_name and param_value is not None:
+                    params[param_name] = param_value
+
+        main_data_id = getattr(self, 'current_main_data_id', None)
+        if main_data_id is None:
+            last_record = self.db.get_last_record()
+            if not last_record.empty:
+                main_data_id = last_record.iloc[0]['id']  # Исправлено: 'id' вместо 'ID'
+            else:
+                logging.error("Нет основной записи для привязки данных давления")
+                messagebox.showerror("Ошибка", "Сначала вставьте основные данные!")
+                return
+
+        try:
+            # Исправленный вызов метода
+            self.db.insert_research_params(main_data_id, section, params)
+            messagebox.showinfo("Успех", "Данные давления сохранены в базу данных")
+        except Exception as e:
+            logging.error(f"Ошибка при сохранении данных давления: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
+
+    @staticmethod
     def convert_value(self, value):
         """Конвертирует строковое значение в соответствующий тип"""
         if not value or value == '':
@@ -2129,7 +1862,6 @@ class ReportGUI:
 
         # Пробуем преобразовать в число
         try:
-            # Заменяем запятую на точку для чисел
             value = value.replace(',', '.')
             return float(value)
         except ValueError:
@@ -2144,210 +1876,12 @@ class ReportGUI:
         # Оставляем как строку
         return value
 
-    def update_main_data(self, record_id, data):
-        """Обновляет запись в main_data"""
-        try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-
-            set_clause = ', '.join([f"{k} = ?" for k in data.keys()])
-            sql = f"UPDATE main_data SET {set_clause} WHERE id = ?"
-
-            params = list(data.values()) + [record_id]
-            cursor.execute(sql, params)
-            conn.commit()
-
-            logging.info(f"Запись {record_id} обновлена успешно")
-
-        except Exception as e:
-            logging.error(f"Ошибка обновления записи: {str(e)}")
-            raise
-
-    def paste_research_params(self):
-        try:
-            # Проверяем, есть ли данные в буфере обмена
-            clipboard_data = self.root.clipboard_get()
-            if not clipboard_data.strip():
-                messagebox.showerror("Ошибка", "Буфер обмена пуст. Скопируйте данные перед вставкой.")
-                return
-
-            # Разделяем данные на строки и столбцы
-            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
-            if not rows:
-                messagebox.showerror("Ошибка", "Нет данных для вставки")
-                return
-
-            wb = load_workbook(self.excel_file)
-            ws = wb['current']
-
-            # Очищаем диапазон D:F перед вставкой новых данных
-            for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=4, max_col=6):
-                for cell in row:
-                    cell.value = None
-
-            # Вставляем данные в диапазон D:F
-            for i, row in enumerate(rows):
-                for j, value in enumerate(row):
-                    value = value.strip()
-                    if j == 1:  # Преобразуем второй столбец в число, если это возможно
-                        try:
-                            value = value.replace(',', '.') if ',' in value else value
-                            cell_value = float(value)
-                        except ValueError:
-                            cell_value = value
-                    else:
-                        cell_value = value
-                    ws.cell(row=i + 1, column=4 + j, value=cell_value)
-
-            # Форматируем числовой столбец (E)
-            for row in ws.iter_rows(min_row=1, max_row=len(rows), min_col=5, max_col=5):
-                for cell in row:
-                    cell.number_format = numbers.FORMAT_NUMBER
-
-            wb.save(self.excel_file)
-            wb.close()
-            messagebox.showinfo("Успех", "Параметры исследования вставлены успешно")
-
-            # Меняем цвет кнопки на зеленый после успешной вставки
-            self.change_button_color(self.insert_button2, True)
-
-
-        except tk.TclError:
-            messagebox.showerror("Ошибка", "Буфер обмена пуст или данные недоступны")
-            self.change_button_color(self.insert_button2, False)  # Сбрасываем цвет
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка при вставке параметров: {str(e)}")
-            self.change_button_color(self.insert_button2, False)  # Сбрасываем цвет
-
-    def paste_research_params_2(self):
-        try:
-            # Проверяем, есть ли данные в буфере обмена
-            clipboard_data = self.root.clipboard_get()
-            if not clipboard_data.strip():
-                messagebox.showerror("Ошибка", "Буфер обмена пуст. Скопируйте данные перед вставкой.")
-                return
-
-            # Разделяем данные на строки и столбцы
-            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
-            if not rows:
-                messagebox.showerror("Ошибка", "Нет данных для вставки")
-                return
-
-            wb = load_workbook(self.excel_file)
-            ws = wb['current']
-
-            # Очищаем диапазон G:I перед вставкой новых данных
-            for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=7, max_col=9):
-                for cell in row:
-                    cell.value = None
-
-            # Вставляем данные в диапазон G:I
-            for i, row in enumerate(rows):
-                for j, value in enumerate(row):
-                    value = value.strip()
-                    if j == 1:  # Преобразуем второй столбец в число, если это возможно
-                        try:
-                            value = value.replace(',', '.') if ',' in value else value
-                            cell_value = float(value)
-                        except ValueError:
-                            cell_value = value
-                    else:
-                        cell_value = value
-                    ws.cell(row=i + 1, column=7 + j, value=cell_value)
-
-            # Форматируем числовой столбец (H)
-            for row in ws.iter_rows(min_row=1, max_row=len(rows), min_col=8, max_col=8):
-                for cell in row:
-                    cell.number_format = numbers.FORMAT_NUMBER
-
-            wb.save(self.excel_file)
-            wb.close()
-            messagebox.showinfo("Успех", "Параметры исследования вставлены успешно")
-
-            self.change_button_color(self.insert_button2_2, True)
-
-        except tk.TclError:
-            messagebox.showerror("Ошибка", "Буфер обмена пуст или данные недоступны")
-            self.change_button_color(self.insert_button2_2, False)
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка при вставке параметров: {str(e)}")
-            self.change_button_color(self.insert_button2_2, False)
-
-    def save_to_excel(self):
-        """Сохраняет данные из полей ввода в базу"""
-        try:
-            if not self.class_entry.get() or not self.success_entry.get():
-                messagebox.showerror("Ошибка", "Заполните обязательные поля")
-                return
-
-            # Получаем последнюю запись
-            last_record = self.db.get_last_record()
-            if last_record.empty:
-                messagebox.showerror("Ошибка", "Нет основных данных для обновления")
-                return
-
-            main_data_id = last_record.iloc[0]['id']
-
-            # Подготавливаем данные для обновления
-            update_data = {
-                'klass': float(self.class_entry.get()),
-                'success': float(self.success_entry.get()),
-                'Durat': float(self.calc_time_entry.get()) if self.calc_time_entry.get() else None
-            }
-
-            # Добавляем поправки
-            corrections = {}
-
-            # Сохраняем расчетное время в J4
-            calc_time = self.calc_time_entry.get()
-            if calc_time:
-                try:
-                    # Пробуем преобразовать в число, если это возможно
-                    ws['J4'] = float(calc_time.replace(',', '.'))
-                except ValueError:
-                    # Если не число, сохраняем как строку
-                    ws['J4'] = calc_time
-
-            ws['C14'] = float(self.class_entry.get())
-            ws['C16'] = float(self.success_entry.get())
-
-            # Сохраняем данные для каждой группы поправок
-            Ppl_entries = [
-                (self.ppl_entries, 2),  # Столбец B
-                (self.ppl2_entries, 3),  # Столбец D
-            ]
-
-            Pzab_entries = [
-                (self.pzab_entries, 2),  # Столбец C
-                (self.pzab2_entries, 3),  # Столбец E
-            ]
-
-            for entries, column in Ppl_entries:
-                for i, entry in enumerate(entries):
-                    ws.cell(row=26 + i, column=column, value=float(entry.get()) if entry.get() else None)
-
-            for entries, column in Pzab_entries:
-                for i, entry in enumerate(entries):
-                    ws.cell(row=31 + i, column=column, value=float(entry.get()) if entry.get() else None)
-
-            # Сохраняем новые поля "Поправка на ВНК Рпл_3" и "Поправка на ВНК Рпл_4"
-            ws['C29'] = float(self.vnkp_pl3_entry.get()) if self.vnkp_pl3_entry.get() else None
-            ws['C34'] = float(self.vnkp_pl4_entry.get()) if self.vnkp_pl4_entry.get() else None
-
-            ws['A19'] = float(self.density_zab_entry.get()) if self.density_zab_entry.get() else None
-            ws['A20'] = float(self.density_pl_entry.get()) if self.density_pl_entry.get() else None
-
-            # Обновляем запись в базе
-            self.update_main_data(main_data_id, update_data)
-
-            # Сохраняем поправки
-            if corrections:
-                self.db.insert_corrections(main_data_id, corrections)
-
-            messagebox.showinfo("Успех", "Данные сохранены успешно")
-
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка при сохранении: {str(e)}")
+    def clear_amendments_fields(self):
+        """Очищает поля ввода поправок"""
+        for entry in self.ppl_entries + self.pzab_entries + self.ppl2_entries + self.pzab2_entries:
+            entry.delete(0, 'end')
+        self.vnkp_pl3_entry.delete(0, 'end')
+        self.vnkp_pl4_entry.delete(0, 'end')
 
     def select_output_file(self):
         self.output_file_path = filedialog.asksaveasfilename(
@@ -2485,45 +2019,39 @@ class ReportGUI:
             logging.warning(f"Ошибка при завершении процесса Excel: {str(e)}")
 
     def generate_report(self):
+        """УПРОЩЕННАЯ ВЕРСИЯ ДЛЯ РАБОТЫ С БАЗОЙ ДАННЫХ"""
+        global db
         try:
             logging.info("Начало формирования отчета")
-            # Проверяем, выбрана ли директория
+
             if not hasattr(self, 'output_directory') or not self.output_directory:
                 logging.error("Не выбрана папка для сохранения отчета")
                 messagebox.showerror("Ошибка", "Сначала выберите папку для сохранения!")
                 return False
 
-            # if not self.output_file_path:
-            #     logging.error("Не выбран путь для сохранения отчета")
-            #     messagebox.showerror("Ошибка", "Сначала выберите место сохранения!")
-            #     return
+            # Получаем данные из базы
+            db = AccessDatabase()
+            last_record = db.get_last_record()
 
-            # Проверка заполнения полей поправок
-            if not all([entry.get() for entry in self.ppl_entries]) or not all(
-                    [entry.get() for entry in self.pzab_entries]):
-                logging.error("Не все данные для первого варианта заполнены")
-                messagebox.showerror("Ошибка", "Заполните все данные для первого варианта!")
+            if last_record.empty:
+                messagebox.showerror("Ошибка", "Нет данных для формирования отчета")
                 return False
 
-            # Загружаем данные из Excel для формирования имени файла
-            wb = load_workbook(self.excel_file)
-            ws = wb['current']
+            main_data_id = last_record.iloc[0]['id']
+            parameters = db.get_parameters(main_data_id)
+            research_params = db.get_research_params(main_data_id)
+            amendments = db.get_amendments(main_data_id)
 
-            # Функция для безопасного получения значений ячеек
-            def get_cell_value(cell):
-                value = ws[cell].value
-                if isinstance(value, datetime):
-                    return value.strftime("%d.%m.%Y")
-                elif isinstance(value, str):
-                    # Пытаемся преобразовать строку в дату, если это возможно
-                    try:
-                        date_obj = datetime.strptime(value, "%d.%m.%Y")
-                        return date_obj.strftime("%d.%m.%Y")
-                    except (ValueError, AttributeError):
-                        return value.strip() if value else "Без_данных"
-                return str(value) if value else "Без_данных"
-
-            wb.close()
+            # Объединяем все данные
+            import pandas as pd  # Добавляем импорт
+            data = {}
+            for column in last_record.columns:
+                value = last_record.iloc[0][column]
+                if pd.notna(value):
+                    data[column.lower()] = value
+            data.update(parameters)
+            data.update(research_params)
+            data.update(amendments)
 
             template_mapping = {
                 "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
@@ -2586,13 +2114,28 @@ class ReportGUI:
             # Создаем объект Document из шаблона
             doc = Document(template_path)
 
+            # Функция для получения значений из данных БД вместо Excel
+            def get_value_from_data(key, default="Без_данных"):
+                """Получает значение из объединенных данных БД"""
+                value = data.get(key, default)
+                if isinstance(value, (datetime, pd.Timestamp)):
+                    return value.strftime("%d.%m.%Y")
+                elif isinstance(value, str):
+                    # Пытаемся преобразовать строку в дату, если это возможно
+                    try:
+                        date_obj = datetime.strptime(value, "%d.%m.%Y")
+                        return date_obj.strftime("%d.%m.%Y")
+                    except (ValueError, AttributeError):
+                        return value.strip() if value else default
+                return str(value) if value else default
+
             # Формируем базовое имя файла
             base_name = (
                 f"Закл_"
-                f"{get_cell_value('B16')}_"
-                f"{get_cell_value('B2')}_"
-                f"{get_cell_value('B3')}_"
-                f"{get_cell_value('B5')}"
+                f"{get_value_from_data('type_of_research', 'Без_данных')}_"
+                f"{get_value_from_data('field', 'Без_данных')}_"
+                f"{get_value_from_data('well', 'Без_данных')}_"
+                f"{get_value_from_data('date_research', 'Без_данных')}"
             )
 
             # Убираем недопустимые символы
@@ -2647,20 +2190,12 @@ class ReportGUI:
                 return False
 
         except Exception as e:
-            logging.error(f"Произошла ошибка: {str(e)}", exc_info=True)
-            import traceback
-            traceback.print_exc()
-            messagebox.showerror("Ошибка", f"Произошла ошибка: {str(e)}")
+            logging.error(f"Ошибка при формировании отчета: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при формировании отчета: {str(e)}")
+            return False
         finally:
-            # Закрываем workbook если он был открыт
-            if 'wb' in locals():
-                try:
-                    wb.close()
-                except:
-                    pass
-
-            # Принудительно закрываем Excel процессы
-            self.kill_excel_processes()
+            if 'db' in locals():
+                db.close()
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import sys
 import os
 import pyodbc
-from database import AccessDatabase
+from db_access import AccessDatabase
 import logging
 
 # Настройка логирования
