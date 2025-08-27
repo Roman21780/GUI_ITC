@@ -65,6 +65,18 @@
 #     return "".join(superscript_map.get(digit, "") for digit in str(number))
 #
 #
+# def clean_string(value):
+#     """
+#     Удаляет недопустимые символы из строки.
+#     :param value: Исходная строка.
+#     :return: Очищенная строка.
+#     """
+#     if isinstance(value, str):
+#         # Удаляем управляющие символы ASCII (коды 0–31)
+#         return re.sub(r'[\x00-\x1F]', '', value)
+#     return value
+#
+#
 # def calculate_r_difference(workbook_path, sheet_name='current'):
 #     """
 #     Находит разницу между последним значением в столбце R и значением за сутки до последней даты.
@@ -2231,6 +2243,7 @@
 #         }
 #         return button_map.get(section)
 #
+#     @clean_string
 #     def paste_data_to_excel(self, data, section_number):
 #         try:
 #             # Очистка данных от недопустимых символов

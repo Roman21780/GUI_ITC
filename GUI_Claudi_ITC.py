@@ -146,7 +146,6 @@ def clean_text(text):
     """
     Удаляет суррогатные символы из текста.
     """
-    # return ''.join(char for char in text if ord(char) <= 65535)
     if isinstance(text, str):
         return text.encode('utf-8', errors='ignore').decode('utf-8')
     return text
@@ -1252,6 +1251,14 @@ class ReportGUI:
 
         self.color_buttons = []
 
+        self.insert_button = None
+        self.model_button = None
+        self.pressure_button = None
+        self.model_button2 = None
+        self.pressure_button2 = None
+        self.insert_button2 = None
+        self.insert_button2_2 = None
+
         # Создаем основной фрейм с прокруткой
         self.main_frame = ttk.Frame(self.root)
         self.main_frame.pack(fill='both', expand=True)
@@ -1285,6 +1292,7 @@ class ReportGUI:
 
         # Инициализация базы данных
         self.db = AccessDatabase()
+        self.current_main_data_id = None
 
         self.section_params = {
             1: {"start_cell": "A1", "expected_columns": 2, "description": "Входные данные"},
@@ -1377,9 +1385,7 @@ class ReportGUI:
         # Фрейм для ввода данных
         frame1 = self.create_labeled_frame(self.tab1, f"1. {self.section_params[1]['description']}")
         ttk.Label(frame1, text="Скопируйте данные:").pack(padx=3, pady=3)
-        self.insert_button = ttk.Button(frame1, text="Вставить", command=lambda: [self.paste_data(1),
-                                                                                  self.change_button_color(
-                                                                                      self.insert_button)])
+        self.insert_button = ttk.Button(frame1, text="Вставить", command=lambda: self.paste_data(1))
         self.insert_button.pack(padx=3, pady=3)
 
         # Класс исследования
@@ -1412,18 +1418,18 @@ class ReportGUI:
 
         # Вставка параметров исследования
         params_frame = self.create_labeled_frame(self.tab1, "6. Параметры исследования")
-        # NEW: Измененные кнопки с отслеживанием нажатия
+
         self.insert_button2 = ttk.Button(
             params_frame,
             text="Вставить параметры",
-            command=self.paste_research_params
+            command=self.paste_research_params  # ← Без скобок!
         )
         self.insert_button2.pack(padx=3, pady=3)
 
         self.insert_button2_2 = ttk.Button(
             params_frame,
             text="Вставить параметры_2",
-            command=self.paste_research_params_2
+            command=self.paste_research_params_2  # ← Без скобок!
         )
         self.insert_button2_2.pack(padx=3, pady=3)
 
@@ -1545,6 +1551,81 @@ class ReportGUI:
         )
         self.pressure_button2.pack(padx=3, pady=3)
 
+    def paste_research_params(self):
+        """Вставляет параметры исследования из буфера обмена"""
+        try:
+            # Проверяем, есть ли данные в буфере обмена
+            clipboard_data = self.root.clipboard_get()
+            if not clipboard_data.strip():
+                messagebox.showerror("Ошибка", "Буфер обмена пуст. Скопируйте данные перед вставкой.")
+                return
+
+            # Разделяем данные на строки и столбцы
+            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
+            if not rows:
+                messagebox.showerror("Ошибка", "Нет данных для вставки")
+                return
+
+            # Обрабатываем данные
+            params = {}
+            for row in rows:
+                if len(row) >= 2:
+                    param_name = row[0].strip()
+                    param_value = row[1].strip()
+                    if param_name and param_value:
+                        converted_value = ReportGUI.convert_value(param_value)
+                        if converted_value is not None:
+                            params[param_name] = converted_value
+
+            # Убеждаемся, что есть основная запись
+            main_data_id = self.ensure_main_data_exists()
+            if main_data_id is None:
+                messagebox.showerror("Ошибка", "Не удалось создать основную запись!")
+                return
+
+            # Сохраняем параметры исследования
+            self.db.insert_research_params(main_data_id, 1, params)
+            messagebox.showinfo("Успех", "Параметры исследования сохранены успешно")
+
+        except Exception as e:
+            logging.error(f"Ошибка при вставке параметров исследования: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при вставке параметров: {str(e)}")
+
+    def paste_research_params_2(self):
+        """Вставляет параметры исследования_2 из буфера обмена"""
+        try:
+            clipboard_data = self.root.clipboard_get()
+            if not clipboard_data.strip():
+                messagebox.showerror("Ошибка", "Буфер обмена пуст.")
+                return
+
+            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
+            if not rows:
+                messagebox.showerror("Ошибка", "Нет данных для вставки")
+                return
+
+            params = {}
+            for row in rows:
+                if len(row) >= 2:
+                    param_name = row[0].strip()
+                    param_value = row[1].strip()
+                    if param_name and param_value:
+                        converted_value = ReportGUI.convert_value(param_value)
+                        if converted_value is not None:
+                            params[param_name] = converted_value
+
+            main_data_id = self.ensure_main_data_exists()
+            if main_data_id is None:
+                messagebox.showerror("Ошибка", "Не удалось создать основную запись!")
+                return
+
+            self.db.insert_research_params(main_data_id, 2, params)
+            messagebox.showinfo("Успех", "Параметры исследования_2 сохранены успешно")
+
+        except Exception as e:
+            logging.error(f"Ошибка при вставке параметров исследования_2: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при вставке параметров: {str(e)}")
+
     def select_output_directory(self):
         """Выбираем только директорию, без имени файла"""
         directory = filedialog.askdirectory(title="Выберите папку для сохранения отчетов")
@@ -1646,25 +1727,35 @@ class ReportGUI:
     @normalize_text
     @clean_text
     def paste_data(self, section):
+        """Общая функция для вставки данных из буфера обмена"""
         try:
             clipboard_data = self.root.clipboard_get()
-            self.log_invalid_characters(clipboard_data)
+            if not clipboard_data.strip():
+                messagebox.showerror("Ошибка", "Буфер обмена пуст")
+                return False
 
-            # Очистка данных от недопустимых символов
-            clipboard_data = clean_text(clipboard_data)
+            # Обрабатываем данные
+            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
 
-            success = self.paste_data_to_db(clipboard_data, section)
+            if section == 1:  # Основные данные
+                return self.process_main_data(rows)
+            elif section in [2, 5]:  # Модели
+                return self.process_model_data(rows, section)
+            elif section in [3, 6]:  # Давление
+                return self.process_pressure_data(rows, section)
+            else:
+                return False
 
-            # Меняем цвет кнопки в зависимости от успеха
-            button = self.get_button_by_section(section)
-            if button:
-                self.change_button_color(button, success)
+        except Exception as e:
+            logging.error(f"Ошибка при вставке данных: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при вставке данных: {str(e)}")
+            return False
 
-        except tk.TclError:
-            messagebox.showerror("Ошибка", "Буфер обмена пуст")
-            button = self.get_button_by_section(section)
-            if button:
-                self.change_button_color(button, False)
+    def clean_text(self, text):
+        """Очищает текст от недопустимых символов"""
+        if isinstance(text, str):
+            return text.encode('utf-8', errors='ignore').decode('utf-8')
+        return text
 
     def get_button_by_section(self, section):
         """Возвращает кнопку по номеру секции"""
@@ -1730,64 +1821,101 @@ class ReportGUI:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка при сохранении параметров: {str(e)}")
 
-
     def save_to_db(self):
-        """Сохраняет данные из полей ввода в БД"""
+        """Сохраняет данные из полей ввода в соответствующие таблицы"""
         try:
-            if not self.class_entry.get() or not self.success_entry.get():
-                messagebox.showerror("Ошибка", "Заполните обязательные поля")
+            # Убеждаемся, что есть основная запись
+            main_data_id = self.ensure_main_data_exists()
+            if main_data_id is None:
+                messagebox.showerror("Ошибка", "Не удалось создать основную запись!")
                 return
 
-            # Получаем ID последней записи
-            last_record = self.db.get_last_record()
-            if last_record.empty:
-                messagebox.showerror("Ошибка", "Нет основных данных для обновления")
-                return
-            main_data_id = last_record.iloc[0]['ID']
+            # Подготавливаем данные для сохранения
+            update_data = {}
 
-            # Сохраняем класс исследования
-            self.db.insert_research_class(main_data_id, self.class_entry.get())
+            # Класс исследования
+            class_value = self.class_entry.get()
+            if class_value:
+                update_data['Klass_issledovaniya'] = ReportGUI.convert_value(class_value)
 
-            # Сохраняем успешность
-            self.db.insert_success(main_data_id, self.success_entry.get())
+            # Успешность исследования
+            success_value = self.success_entry.get()
+            if success_value:
+                update_data['Uspeshnost'] = ReportGUI.convert_value(success_value)
 
-            # Сохраняем плотность
-            self.db.insert_density(main_data_id,
-                                   self.density_zab_entry.get() or 0,
-                                   self.density_pl_entry.get() or 0)
+            # Расчетное время
+            calc_time = self.calc_time_entry.get()
+            if calc_time:
+                update_data['Durat'] = ReportGUI.convert_value(calc_time)
 
-            # Сохраняем расчетное время
-            if self.calc_time_entry.get():
-                self.db.insert_estimated_time(main_data_id, self.calc_time_entry.get())
+            # Плотность
+            density_zab = self.density_zab_entry.get()
+            if density_zab:
+                update_data['density_zab'] = ReportGUI.convert_value(density_zab)
 
-            # Сохраняем поправки
-            amendments_dict = {}
-            # ... логика заполнения amendments_dict из полей поправок ...
-            self.db.insert_amendments(main_data_id, amendments_dict)
+            density_pl = self.density_pl_entry.get()
+            if density_pl:
+                update_data['density_pl'] = ReportGUI.convert_value(density_pl)
 
-            messagebox.showinfo("Успех", "Все данные сохранены в базу данных")
+            # Сохраняем данные
+            if update_data:
+                self.db.update_main_data(main_data_id, update_data)
+                messagebox.showinfo("Успех", "Данные успешно сохранены в базу данных")
+            else:
+                messagebox.showinfo("Информация", "Нет данных для сохранения")
 
         except Exception as e:
-            messagebox.showerror("Ошибка", f"Ошибка при сохранении: {str(e)}")
+            logging.error(f"Ошибка при сохранении данных: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
 
     def process_main_data(self, rows):
         """Обрабатывает основные данные (секция 1) и сохраняет в базу"""
-        # Преобразуем данные в словарь
-        data_dict = {}
-        for row in rows:
-            if len(row) >= 2:
-                key = row[0].strip()
-                value = row[1].strip()
-                if key and value:
-                    data_dict[key] = self.convert_value(value)
-
-        # Сохраняем в базу
         try:
+            # Жесткий порядок полей (соответствует порядку в буфере обмена)
+            field_order = [
+                'Company',  # Компания
+                'Localoredenie',  # Месторождение
+                'Skvazhina',  # Скважина
+                'VNK',  # Имя исследования / #
+                'Data_issledovaniya',  # Дата исследования
+                'Plast',  # Пласт
+                'Interval_perforacii',  # Интервал перфорации
+                'Tip_pribora',  # Тип прибора / #
+                'Glubina_ustanovki_pribora',  # Глубина установки прибора
+                'Interpretator',  # Имя интерпретатора
+                'Data_interpretacii',  # Дата интерпретации
+                'Vremya_issledovaniya',  # Время исследования (без заголовка)
+                'Obvodnennost',  # Обводненность (без заголовка)
+                'Nalicie_paktera',  # Наличие пакера (без заголовка)
+                'Data_GRP',  # Дата ГРП (без заголовка)
+                'Vid_issledovaniya'  # Вид исследования (без заголовка)
+            ]
+
+            # Собираем все значения из строк
+            all_values = []
+            for row in rows:
+                if len(row) >= 2:
+                    value = row[1].strip()
+                    if value:  # Добавляем только непустые значения
+                        all_values.append(value)
+
+            # Создаем словарь данных
+            data_dict = {}
+            for i, field_name in enumerate(field_order):
+                if i < len(all_values):
+                    data_dict[field_name] = ReportGUI.convert_value(all_values[i])
+
+            # Отладочная информация
+            print("Данные для сохранения:")
+            for key, value in data_dict.items():
+                print(f"  {key}: {value}")
+
+            # Сохраняем в базу
             main_data_id = self.db.insert_main_data(data_dict)
             logging.info(f"Основные данные сохранены с ID: {main_data_id}")
 
             # Сохраняем ID для использования в других методах
-            self.current_main_data_id = main_data_id  # Исправлено: атрибут определен в __init__
+            self.current_main_data_id = main_data_id
 
             messagebox.showinfo("Успех", "Основные данные сохранены в базу данных")
             return main_data_id
@@ -1796,6 +1924,30 @@ class ReportGUI:
             logging.error(f"Ошибка при сохранении основных данных: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
             return None
+
+    def ensure_main_data_exists(self):
+        """Проверяет и создает основную запись если нужно"""
+        if self.current_main_data_id is None:
+            last_record = self.db.get_last_record()
+            if not last_record.empty:
+                self.current_main_data_id = last_record.iloc[0]['id']
+                return self.current_main_data_id
+            else:
+                # Создаем пустую основную запись
+                try:
+                    empty_data = {
+                        "company": "Не указано",
+                        "field": "Не указано",
+                        "well": "Не указано",
+                        "created_date": datetime.now()
+                    }
+                    self.current_main_data_id = self.db.insert_main_data(empty_data)
+                    logging.info(f"Создана пустая основная запись с ID: {self.current_main_data_id}")
+                    return self.current_main_data_id
+                except Exception as e:
+                    logging.error(f"Ошибка создания пустой записи: {str(e)}")
+                    return None
+        return self.current_main_data_id
 
     def process_model_data(self, rows, section):
         """Обрабатывает данные модели (секция 2 или 5)"""
@@ -1855,22 +2007,43 @@ class ReportGUI:
             messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
 
     @staticmethod
-    def convert_value(self, value):
+    def convert_value(value):
         """Конвертирует строковое значение в соответствующий тип"""
-        if not value or value == '':
+        if not value or value == '' or value == 'None' or value is None:
+            return None
+
+        if not isinstance(value, str):
+            return value
+
+        value = value.strip()
+
+        # Обработка специальных значений
+        if value in ['-', '—', '–', 'н/д', 'не указано']:
             return None
 
         # Пробуем преобразовать в число
         try:
-            value = value.replace(',', '.')
-            return float(value)
+            value_clean = value.replace(',', '.')
+            return float(value_clean)
         except ValueError:
             pass
 
-        # Пробуем преобразовать в дату
+        # Пробуем преобразовать в целое число
         try:
-            return datetime.strptime(value, '%d.%m.%Y').date()
+            return int(value)
         except ValueError:
+            pass
+
+        # Пробуем преобразовать в дату (разные форматы)
+        try:
+            from datetime import datetime
+            # Пробуем разные форматы дат
+            for fmt in ['%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d.%m.%y']:
+                try:
+                    return datetime.strptime(value, fmt).date()
+                except ValueError:
+                    continue
+        except:
             pass
 
         # Оставляем как строку
