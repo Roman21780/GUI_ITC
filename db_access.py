@@ -38,11 +38,35 @@ class AccessDatabase:
         try:
             conn = self.get_connection()
             query = "SELECT TOP 1 * FROM InputData ORDER BY ID DESC"
-            df = pd.read_sql(query, conn)
+            with conn.cursor() as cursor:
+                cursor.execute(query)
+                columns = [column[0] for column in cursor.description]
+                data = cursor.fetchall()
+                df = pd.DataFrame(data, columns=columns)
             return df
         except Exception as e:
             logging.error(f"Ошибка получения последней записи: {str(e)}")
             return pd.DataFrame()
+
+    def get_model_vnk_ordered(self, input_data_id):
+        """Получает данные ModelVNK в исходном порядке"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                           SELECT empty, DT, deltaP, DP, PressureVnkModel
+                           FROM ModelVNK
+                           WHERE InputData_ID = ?
+                           ORDER BY sort_order
+                           """, (input_data_id,))
+
+            results = cursor.fetchall()
+            return results
+
+        except Exception as e:
+            print(f"Ошибка получения данных: {e}")
+            return []
 
     def clear_data(self):
         """Очищает все данные из таблиц базы данных."""
@@ -52,7 +76,7 @@ class AccessDatabase:
             'dampingTable', 'calculatedPressure', 'calculatedParameters',
             'amendments', 'Parameters', 'InputData',
             'researchClass', 'success', 'density', 'estimatedTime',
-            'ModelVNK', 'PressureVNK', 'pressureLastPoint'
+            'ModelVNK', 'PressureVNK', 'pressureLastPoint', 'TextParameters', 'ModelKSD'
         ]
         try:
             for table in tables:
@@ -128,53 +152,363 @@ class AccessDatabase:
             logging.error(f"Ошибка при вставке в InputData: {e}")
             raise
 
-    def insert_calculated_parameters(self, main_data_id, params_dict):
-        """Вставляет параметры в calculatedParameters."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        sql = "INSERT INTO calculatedParameters (MainDataID, ParamName, ParamValue) VALUES (?, ?, ?)"
+    def insert_all_calculated_parameters_from_clipboard(self, input_data_id, clipboard_data):
+        """Вставляет все параметры (числовые и текстовые) в соответствующие таблицы"""
         try:
-            for param_name, param_value in params_dict.items():
-                cursor.execute(sql, (main_data_id, param_name, str(param_value)))
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Разбираем данные из буфера обмена
+            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
+
+            numeric_count = 0
+            text_count = 0
+            updated_count = 0
+
+            for row in rows:
+                if len(row) >= 2:
+                    param_name = row[0].strip()
+                    param_value = row[1].strip()
+                    unit = row[2].strip() if len(row) >= 3 else ""
+
+                    if param_name and param_value:
+                        # Пробуем вставить как число
+                        try:
+                            numeric_value = float(param_value.replace(',', '.'))
+
+                            # ПРОВЕРЯЕМ СУЩЕСТВОВАНИЕ ЗАПИСИ
+                            check_sql = "SELECT COUNT(*) FROM calculatedParameters WHERE InputData_ID = ? AND calcParam = ?"
+                            cursor.execute(check_sql, (input_data_id, param_name))
+                            exists = cursor.fetchone()[0] > 0
+
+                            if exists:
+                                # ОБНОВЛЯЕМ существующую запись
+                                update_sql = "UPDATE calculatedParameters SET Val = ?, unit = ? WHERE InputData_ID = ? AND calcParam = ?"
+                                cursor.execute(update_sql, (numeric_value, unit, input_data_id, param_name))
+                                updated_count += 1
+                            else:
+                                # ВСТАВЛЯЕМ новую запись
+                                sql = "INSERT INTO calculatedParameters (InputData_ID, calcParam, Val, unit) VALUES (?, ?, ?, ?)"
+                                cursor.execute(sql, (input_data_id, param_name, numeric_value, unit))
+                                numeric_count += 1
+
+                        except ValueError:
+                            # Если не число, вставляем как текст в другую таблицу
+                            # Сначала проверим, существует ли таблица TextParameters
+                            try:
+                                check_sql = "SELECT COUNT(*) FROM TextParameters WHERE InputData_ID = ? AND ParamName = ?"
+                                cursor.execute(check_sql, (input_data_id, param_name))
+                                exists = cursor.fetchone()[0] > 0
+
+                                if exists:
+                                    update_sql = "UPDATE TextParameters SET ParamValue = ?, Unit = ? WHERE InputData_ID = ? AND ParamName = ?"
+                                    cursor.execute(update_sql, (param_value, unit, input_data_id, param_name))
+                                else:
+                                    sql = "INSERT INTO TextParameters (InputData_ID, ParamName, ParamValue, Unit) VALUES (?, ?, ?, ?)"
+                                    cursor.execute(sql, (input_data_id, param_name, param_value, unit))
+                                text_count += 1
+                            except:
+                                # Если таблицы TextParameters нет, просто пропускаем текстовые параметры
+                                print(f"Пропущен текстовый параметр: {param_name} = {param_value}")
+                                continue
+
             conn.commit()
-            logger.info("Параметры успешно добавлены в calculatedParameters.")
-        except pyodbc.Error as e:
-            conn.rollback()
-            logger.error(f"Ошибка при вставке в calculatedParameters: {e}")
+            print(
+                f"Вставлено новых: {numeric_count} числовых, {text_count} текстовых. Обновлено: {updated_count} записей")
+
+        except Exception as e:
+            logging.error(f"Ошибка вставки параметров: {str(e)}")
             raise
 
-    def insert_model_vnk(self, main_data_id, model_data):
-        """Вставляет данные модели в ModelVNK."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        sql = "INSERT INTO ModelVNK (MainDataID, ModelData) VALUES (?, ?)"
+    def insert_model_vnk(self, input_data_id, data_list, research_type=None):
+        """Вставляет данные в ModelVNK с сохранением порядка"""
         try:
-            # Преобразуем данные модели в строку JSON для хранения
-            import json
-            model_json = json.dumps(model_data, ensure_ascii=False)
-            cursor.execute(sql, (main_data_id, model_json))
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            print(f"=== ВСТАВКА С СОХРАНЕНИЕМ ПОРЯДКА ===")
+
+            inserted_count = 0
+
+            for i, data in enumerate(data_list):
+                # Преобразуем значения
+                dt_value = self.convert_scientific_notation(data.get('DT', '0'))
+                dp_value = self.convert_scientific_notation(data.get('DP', '0'))
+                delta_p_value = self.convert_scientific_notation(data.get('deltaP', '0'))
+
+                if None in [dt_value, dp_value, delta_p_value]:
+                    continue
+
+                try:
+                    # Вставляем с порядковым номером
+                    sql = """INSERT INTO ModelVNK (empty, DT, deltaP, DP, InputData_ID, sort_order)
+                             VALUES (?, ?, ?, ?, ?, ?)"""
+                    cursor.execute(sql, (
+                        data.get('empty', ''),
+                        dt_value,
+                        delta_p_value,
+                        dp_value,
+                        input_data_id,
+                        i  # Порядковый номер для сортировки
+                    ))
+                    inserted_count += 1
+
+                except Exception as insert_error:
+                    print(f"Ошибка вставки записи {i}: {insert_error}")
+                    # Продолжаем вставку остальных записей
+
             conn.commit()
-            logger.info("Данные модели успешно добавлены в ModelVNK.")
-        except pyodbc.Error as e:
-            conn.rollback()
-            logger.error(f"Ошибка при вставке в ModelVNK: {e}")
+            print(f"Успешно вставлено записей: {inserted_count}")
+
+            logging.info(f"Данные ModelVNK сохранены для ID: {input_data_id}")
+
+        except Exception as e:
+            logging.error(f"Ошибка вставки ModelVNK: {str(e)}")
             raise
 
-    def insert_pressure_vnk(self, main_data_id, pressure_data):
-        """Вставляет данные давления в PressureVNK."""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        sql = "INSERT INTO PressureVNK (MainDataID, PressureData) VALUES (?, ?)"
+    def convert_scientific_notation(self, value):
+        """Корректно преобразует научную нотацию в float"""
+        if not value:
+            return 0.0
+
         try:
-            import json
-            pressure_json = json.dumps(pressure_data, ensure_ascii=False)
-            cursor.execute(sql, (main_data_id, pressure_json))
+            # Убираем пробелы и заменяем запятые на точки
+            clean_value = str(value).strip().replace(' ', '').replace(',', '.')
+
+            # Обрабатываем научную нотацию
+            if 'E' in clean_value.upper():
+                # Для научной нотации: 4.81E-04 -> 0.000481
+                return float(clean_value)
+            else:
+                # Для обычных чисел
+                return float(clean_value)
+
+        except (ValueError, TypeError) as e:
+            print(f"Ошибка преобразования '{value}': {e}")
+            return 0.0
+
+    def calculate_pressure_vnk_model(self, input_data_id, research_type):
+        """Рассчитывает PressureVnkModel на основе данных исследования"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Получаем все записи для этого исследования
+            cursor.execute("""
+                           SELECT ID, DT, deltaP, DP, PressureVnkModel
+                           FROM ModelVNK
+                           WHERE InputData_ID = ?
+                           ORDER BY ID
+                           """, (input_data_id,))
+
+            records = cursor.fetchall()
+
+            if not records:
+                print("Нет данных для расчета")
+                return
+
+            # Получаем PzabVnk из calculatedParameters
+            cursor.execute("""
+                           SELECT Val
+                           FROM calculatedParameters
+                           WHERE InputData_ID = ?
+                             AND calcParam = 'PzabVnk'
+                           """, (input_data_id,))
+
+            pzab_vnk_result = cursor.fetchone()
+            pzab_vnk = pzab_vnk_result[0] if pzab_vnk_result else None
+
+            if pzab_vnk is None:
+                print("Не найдено PzabVnk для расчета")
+                return
+
+            print(f"PzabVnk для расчета: {pzab_vnk}")
+            print(f"Тип исследования: {research_type}")
+            print(f"Найдено записей: {len(records)}")
+
+            # Расчет значений PressureVnkModel
+            for i, record in enumerate(records):
+                record_id, dt, delta_p, dp, current_value = record
+
+                if "КПД" in research_type.upper():
+                    # Логика для КПД исследований
+                    if i == 0:
+                        new_value = pzab_vnk
+                    elif i == 1:
+                        new_value = pzab_vnk - delta_p
+                    else:
+                        prev_record = records[i - 1]
+                        new_value = prev_record[4] - delta_p + records[i - 1][
+                            2]  # prev PressureVnkModel - deltaP + prev deltaP
+                else:
+                    # Логика для других исследований
+                    if i == 0:
+                        new_value = pzab_vnk
+                    elif i == 1:
+                        new_value = pzab_vnk + delta_p
+                    else:
+                        prev_record = records[i - 1]
+                        new_value = prev_record[4] + delta_p - records[i - 1][
+                            2]  # prev PressureVnkModel + deltaP - prev deltaP
+
+                # Обновляем запись
+                cursor.execute("""
+                               UPDATE ModelVNK
+                               SET PressureVnkModel = ?
+                               WHERE ID = ?
+                               """, (new_value, record_id))
+
+                print(f"Запись {i}: DT={dt}, deltaP={delta_p}, PressureVnkModel={new_value}")
+
             conn.commit()
-            logger.info("Данные давления успешно добавлены в PressureVNK.")
-        except pyodbc.Error as e:
-            conn.rollback()
-            logger.error(f"Ошибка при вставке в PressureVNK: {e}")
+            print("Расчет PressureVnkModel завершен")
+
+        except Exception as e:
+            print(f"Ошибка расчета PressureVnkModel: {e}")
             raise
+
+    def get_research_type(self, input_data_id):
+        """Получает тип исследования по ID записи"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT Vid_issledovaniya FROM InputData WHERE ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+
+            return result[0] if result else ""
+
+        except Exception as e:
+            print(f"Ошибка получения типа исследования: {e}")
+            return ""
+
+    def has_model_vnk_data(self, input_data_id):
+        """Проверяет есть ли данные в ModelVNK"""
+        try:
+            conn = self.get_connection()
+            query = "SELECT COUNT(*) as count FROM ModelVNK WHERE InputData_ID = ?"
+            df = pd.read_sql(query, conn, params=[input_data_id])
+            return df.iloc[0]['count'] > 0
+        except Exception as e:
+            logging.error(f"Ошибка проверки ModelVNK: {str(e)}")
+            return False
+
+    def get_last_model_vnk_pressure(self, input_data_id):
+        """Получает последнее значение PressureVnkModel из ModelVNK"""
+        try:
+            conn = self.get_connection()
+            query = """
+                    SELECT TOP 1 PressureVnkModel \
+                    FROM ModelVNK
+                    WHERE InputData_ID = ? \
+                      AND PressureVnkModel IS NOT NULL
+                    ORDER BY ID DESC \
+                    """
+            df = pd.read_sql(query, conn, params=[input_data_id])
+            return df.iloc[0]['PressureVnkModel'] if not df.empty else None
+        except Exception as e:
+            logging.error(f"Ошибка получения давления ModelVNK: {str(e)}")
+            return None
+
+    def insert_pressure_vnk(self, input_data_id, data_list):
+        """Вставляет данные в PressureVNK пакетно"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Пакетная вставка
+            batch_size = 5000  # Вставляем по 5000 записей за раз
+            for i in range(0, len(data_list), batch_size):
+                batch = data_list[i:i + batch_size]
+
+                # Создаем пакетный запрос
+                values = []
+                for data in batch:
+                    values.append((data.get('Dat'), data.get('PressureVnk')))
+
+                # Пакетная вставка
+                cursor.executemany(
+                    "INSERT INTO PressureVNK (Dat, PressureVnk) VALUES (?, ?)",
+                    values
+                )
+                print(f"Вставлено {len(batch)} записей...")
+
+                # Коммит после каждого пакета
+                conn.commit()
+
+            logging.info(f"Данные PressureVNK сохранены для записи ID: {input_data_id}")
+
+        except Exception as e:
+            logging.error(f"Ошибка вставки PressureVNK: {str(e)}")
+            raise
+
+
+    def get_last_pressure_vnk(self, input_data_id):
+        """Получает последнее значение PressureVnk из PressureVNK"""
+        try:
+            conn = self.get_connection()
+            query = """
+                    SELECT TOP 1 PressureVnk \
+                    FROM PressureVNK
+                    WHERE InputData_ID = ? \
+                      AND PressureVnk IS NOT NULL
+                    ORDER BY ID DESC \
+                    """
+            df = pd.read_sql(query, conn, params=[input_data_id])
+            return df.iloc[0]['PressureVnk'] if not df.empty else None
+        except Exception as e:
+            logging.error(f"Ошибка получения давления PressureVNK: {str(e)}")
+            return None
+
+    def insert_model_ksd(self, input_data_id, data_list):
+        """Вставляет данные в ModelKSD"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            for data in data_list:
+                sql = "INSERT INTO ModelKSD (InputData_ID, empty, Dat, PressureVnkModel) VALUES (?, ?, ?, ?)"
+                cursor.execute(sql, (
+                    input_data_id,
+                    data.get('empty'),
+                    data.get('Dat'),
+                    data.get('PressureVnkModel')
+                ))
+
+            conn.commit()
+            logging.info(f"Данные ModelKSD сохранены для записи ID: {input_data_id}")
+
+        except Exception as e:
+            logging.error(f"Ошибка вставки ModelKSD: {str(e)}")
+            raise
+
+    def has_model_ksd_data(self, input_data_id):
+        """Проверяет есть ли данные в ModelKSD"""
+        try:
+            conn = self.get_connection()
+            query = "SELECT COUNT(*) as count FROM ModelKSD WHERE InputData_ID = ?"
+            df = pd.read_sql(query, conn, params=[input_data_id])
+            return df.iloc[0]['count'] > 0
+        except Exception as e:
+            logging.error(f"Ошибка проверки ModelKSD: {str(e)}")
+            return False
+
+    def get_last_model_ksd_pressure(self, input_data_id):
+        """Получает последнее значение PressureVnkModel из ModelKSD"""
+        try:
+            conn = self.get_connection()
+            query = """
+                    SELECT TOP 1 PressureVnkModel \
+                    FROM ModelKSD
+                    WHERE InputData_ID = ? \
+                      AND PressureVnkModel IS NOT NULL
+                    ORDER BY ID DESC \
+                    """
+            df = pd.read_sql(query, conn, params=[input_data_id])
+            return df.iloc[0]['PressureVnkModel'] if not df.empty else None
+        except Exception as e:
+            logging.error(f"Ошибка получения давления ModelKSD: {str(e)}")
+            return None
 
     def insert_research_class(self, input_data_id, klass):
         """Вставляет класс исследования"""
@@ -257,39 +591,37 @@ class AccessDatabase:
             logging.error(f"Ошибка вставки расчетного времени: {str(e)}")
             raise
 
-    def insert_amendments_from_gui(self, input_data_id, amendments_data):
-        """Вставляет поправки из GUI окошек в таблицу amendments"""
+    def insert_amendments(self, input_data_id, amendments_dict):
+        """Вставляет поправки в таблицу amendments"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Маппинг русских названий поправок на английские (для базы)
-            correction_mapping = {
-                'поправка с насоса на ВНК Рпл': 'pump_to_vnk_ppl',
-                'поправка с насоса на ВДП Рпл': 'pump_to_vdp_ppl',
-                'поправка с насоса на ГНК Рпл': 'pump_to_gnk_ppl',
-                'поправка с насоса на ВНК Рзаб': 'pump_to_vnk_pzab',
-                'поправка с насоса на ВДП Рзаб': 'pump_to_vdp_pzab',
-                'поправка с насоса на ГНК Рзаб': 'pump_to_gnk_pzab',
-                'ВНК_Рпл_3': 'vnk_ppl_3',
-                'ВНК_Рпл_4': 'vnk_ppl_4'
-            }
+            # Проверяем какие поля действительно есть в таблице
+            existing_fields = self.get_table_columns('amendments')
 
-            for correction_type_ru, value in amendments_data.items():
-                if value is not None:
-                    # Конвертируем русское название в английское
-                    correction_type_en = correction_mapping.get(correction_type_ru, correction_type_ru)
+            # Вставляем только существующие поля
+            for field_name, value in amendments_dict.items():
+                if field_name in existing_fields and value is not None:
+                    # Проверяем, есть ли уже запись для этого InputData_ID
+                    check_sql = f"SELECT COUNT(*) FROM amendments WHERE InputData_ID = ? AND {field_name} IS NOT NULL"
+                    cursor.execute(check_sql, (input_data_id,))
+                    exists = cursor.fetchone()[0] > 0
 
-                    cursor.execute(
-                        "INSERT INTO amendments (InputData_ID, Correction_type, Value, created_date) VALUES (?, ?, ?, ?)",
-                        (input_data_id, correction_type_en, float(value), datetime.now())
-                    )
+                    if exists:
+                        # Обновляем существующую запись
+                        update_sql = f"UPDATE amendments SET {field_name} = ? WHERE InputData_ID = ?"
+                        cursor.execute(update_sql, (value, input_data_id))
+                    else:
+                        # Вставляем новую запись
+                        insert_sql = f"INSERT INTO amendments (InputData_ID, {field_name}) VALUES (?, ?)"
+                        cursor.execute(insert_sql, (input_data_id, value))
 
             conn.commit()
-            logging.info(f"Поправки из GUI сохранены для записи ID: {input_data_id}")
+            logging.info(f"Поправки сохранены для записи ID: {input_data_id}")
 
         except Exception as e:
-            logging.error(f"Ошибка вставки поправок из GUI: {str(e)}")
+            logging.error(f"Ошибка вставки поправок: {str(e)}")
             raise
 
     def get_parameters(self, input_data_id):
@@ -307,55 +639,47 @@ class AccessDatabase:
         """Алиас для get_parameters (для совместимости)"""
         return self.get_parameters(main_data_id)
 
-    def get_all_amendments(self, input_data_id):
-        """Получает все поправки для указанной записи с русскими названиями"""
+    def get_amendments(self, input_data_id):
+        """Получает поправки для указанной записи"""
         try:
             conn = self.get_connection()
-            query = "SELECT * FROM amendments WHERE InputData_ID = ? ORDER BY ID"
+            query = "SELECT * FROM amendments WHERE InputData_ID = ?"
             df = pd.read_sql(query, conn, params=[input_data_id])
 
-            # Обратный маппинг для отображения русских названий
-            reverse_mapping = {
-                'pump_to_vnk_ppl': 'поправка с насоса на ВНК Рпл',
-                'pump_to_vdp_ppl': 'поправка с насоса на ВДП Рпл',
-                'pump_to_gnk_ppl': 'поправка с насоса на ГНК Рпл',
-                'pump_to_vnk_pzab': 'поправка с насоса на ВНК Рзаб',
-                'pump_to_vdp_pzab': 'поправка с насоса на ВДП Рзаб',
-                'pump_to_gnk_pzab': 'поправка с насоса на ГНК Рзаб',
-                'vnk_ppl_3': 'ВНК_Рпл_3',
-                'vnk_ppl_4': 'ВНК_Рпл_4'
-            }
-
             if not df.empty:
-                df['Correction_type_ru'] = df['Correction_type'].map(
-                    lambda x: reverse_mapping.get(x, x)
-                )
-
-            return df
+                # Возвращаем первую запись (предполагаем одну запись на InputData_ID)
+                return df.iloc[0].to_dict()
+            else:
+                # Возвращаем пустой словарь с правильными ключами
+                columns = self.get_table_columns('amendments')
+                return {col: None for col in columns if col != 'ID'}
 
         except Exception as e:
             logging.error(f"Ошибка получения поправок: {str(e)}")
-            return pd.DataFrame()
+            return {}
 
-    def insert_research_params(self, input_data_id, section, params):
-        """Вставляет параметры исследования в calculatedParameters"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
 
-            for param_name, param_value in params.items():
-                if param_value is not None:
-                    cursor.execute(
-                        "INSERT INTO calculatedParameters (InputData_ID, Section, Param_name, Param_value, created_date) VALUES (?, ?, ?, ?, ?)",
-                        (input_data_id, section, param_name, str(param_value), datetime.now())
-                    )
+    @staticmethod
+    def convert_parameter_value(self, value):
+        """Конвертирует значение параметра в подходящий тип для БД"""
+        if value is None:
+            return None
 
-            conn.commit()
-            logging.info(f"Параметры исследования сохранены для секции {section}")
+        if isinstance(value, (int, float)):
+            return value
 
-        except Exception as e:
-            logging.error(f"Ошибка вставки параметров исследования: {str(e)}")
-            raise
+        if isinstance(value, str):
+            # Пробуем преобразовать строку в число
+            try:
+                # Убираем пробелы и запятые (для чисел с разделителями)
+                clean_value = value.replace(' ', '').replace(',', '.')
+                return float(clean_value)
+            except ValueError:
+                # Если не число, оставляем как строку
+                return value.strip()
+
+        # Для других типов преобразуем в строку
+        return str(value)
 
     # Дополнительные методы для проверки
     def table_exists(self, table_name):
@@ -437,7 +761,7 @@ class AccessDatabase:
                 return
 
             # Сохраняем поправки в базу
-            self.insert_amendments_from_gui(main_data_id, amendments_data)
+            self.insert_amendments(main_data_id, amendments_data)
             messagebox.showinfo("Успех", "Поправки успешно сохранены в базу данных")
 
             # Очищаем поля после сохранения
@@ -610,3 +934,203 @@ class AccessDatabase:
 
         except Exception as e:
             print(f"Ошибка: {e}")
+
+    def calculate_pressure_values(self, input_data_id, pressure_last_point=None):
+        """Рассчитывает значения для calculatedPressure"""
+        try:
+            # Получаем необходимые данные
+            vid_issledovaniya = self.get_vid_issledovaniya(input_data_id)
+            pzab_vnk = None
+            ppl_vnk = None
+
+            # Логика расчета PzabVnk
+            if vid_issledovaniya and any(x in vid_issledovaniya.upper() for x in ['КСД', 'АДД']):
+                last_pressure = self.get_last_pressure_vnk(input_data_id)
+                pzab_vnk = last_pressure
+            else:
+                p_param = self.get_calculated_parameter(input_data_id, 'P @ dt=0')
+                pzab_vnk = p_param
+
+            # Логика расчета PplVnk
+            has_model_vnk = self.has_model_vnk_data(input_data_id)
+            has_model_ksd = self.has_model_ksd_data(input_data_id)
+
+            if has_model_vnk:
+                ppl_vnk = self.get_last_model_vnk_pressure(input_data_id)
+            elif vid_issledovaniya and any(x in vid_issledovaniya.upper() for x in ['КСД', 'АДД']):
+                ppl_vnk = self.get_last_model_ksd_pressure(input_data_id)
+            elif vid_issledovaniya and 'ГРП' not in vid_issledovaniya.upper():
+                initial_pressure = self.get_calculated_parameter(input_data_id, 'Начальное пластовое давление')
+                ppl_vnk = initial_pressure
+            else:
+                ppl_vnk = pressure_last_point  # Используем переданное значение
+
+            # Получаем поправки
+            amendments = self.get_amendments(input_data_id)
+
+            # Используем поправки из соответствующей модели
+            if has_model_vnk or ('КПД' in str(vid_issledovaniya or '')):
+                # Используем основные поправки (первая модель)
+                amend_vnk_ppl = amendments.get('amendVnkPpl', 0)
+                amend_vdp_ppl = amendments.get('amendVdpPpl', 0)
+                amend_gnk_ppl = amendments.get('amendGnkPpl', 0)
+                amend_vnk_pzab = amendments.get('amendVnkPzab', 0)
+                amend_vdp_pzab = amendments.get('amendVdpPzab', 0)
+                amend_gnk_pzab = amendments.get('amendGnkPzab', 0)
+            else:
+                # Используем вторую модель поправок
+                amend_vnk_ppl = amendments.get('amendVnkPpl2', amendments.get('amendVnkPpl', 0))
+                amend_vdp_ppl = amendments.get('amendVdpPpl2', amendments.get('amendVdpPpl', 0))
+                amend_gnk_ppl = amendments.get('amendGnkPpl2', amendments.get('amendGnkPpl', 0))
+                amend_vnk_pzab = amendments.get('amendVnkPzab2', amendments.get('amendVnkPzab', 0))
+                amend_vdp_pzab = amendments.get('amendVdpPzab2', amendments.get('amendVdpPzab', 0))
+                amend_gnk_pzab = amendments.get('amendGnkPzab2', amendments.get('amendGnkPzab', 0))
+
+            # Рассчитываем остальные параметры
+            calculated_data = {
+                'PplVnk': ppl_vnk,
+                'PzabVnk': pzab_vnk,
+                'PplGlubZam': ppl_vnk - amend_vnk_ppl if ppl_vnk is not None else None,
+                'PplVdp': (ppl_vnk - amend_vnk_ppl) + amend_vdp_ppl if ppl_vnk is not None else None,
+                'PplGnk': (ppl_vnk - amend_vnk_ppl) + amend_gnk_ppl if ppl_vnk is not None else None,
+                'PzabGlubZam': pzab_vnk - amend_vnk_pzab if pzab_vnk is not None else None,
+                'PzabVdp': (pzab_vnk - amend_vnk_pzab) + amend_vdp_pzab if pzab_vnk is not None else None,
+                'PzabGnk': (pzab_vnk - amend_vnk_pzab) + amend_gnk_pzab if pzab_vnk is not None else None
+            }
+
+            # Фильтруем None значения
+            calculated_data = {k: v for k, v in calculated_data.items() if v is not None}
+
+            # Сохраняем рассчитанные данные
+            if calculated_data:
+                self.insert_calculated_pressure(input_data_id, calculated_data)
+
+            return calculated_data
+
+        except Exception as e:
+            logging.error(f"Ошибка расчета давлений: {str(e)}")
+            raise
+
+    def get_table_columns(self, table_name):
+        """Получает список колонок таблицы"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT TOP 1 * FROM {table_name}")
+            return [column[0] for column in cursor.description]
+        except Exception as e:
+            logging.error(f"Ошибка получения колонок {table_name}: {str(e)}")
+            return []
+
+    def get_vid_issledovaniya(self, input_data_id):
+        """Получает вид исследования из InputData"""
+        try:
+            conn = self.get_connection()
+            query = "SELECT Vid_issledovaniya FROM InputData WHERE ID = ?"
+            df = pd.read_sql(query, conn, params=[input_data_id])
+            return df.iloc[0]['Vid_issledovaniya'] if not df.empty else None
+        except Exception as e:
+            logging.error(f"Ошибка получения вида исследования: {str(e)}")
+            return None
+
+
+    def insert_calculated_pressure(self, input_data_id, calculated_data):
+        """Вставляет рассчитанные давления в calculatedPressure"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Фильтруем только существующие поля
+            existing_fields = self.get_table_columns('calculatedPressure')
+            valid_data = {k: v for k, v in calculated_data.items() if k in existing_fields and v is not None}
+
+            if valid_data:
+                # Добавляем InputData_ID в поля и значения
+                fields = ['InputData_ID'] + list(valid_data.keys())
+                values = [input_data_id] + list(valid_data.values())
+                placeholders = ['?'] * len(values)
+
+                sql = f"INSERT INTO calculatedPressure ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
+                cursor.execute(sql, values)
+                conn.commit()
+
+                logging.info(f"Рассчитанные давления сохранены для записи ID: {input_data_id}")
+
+        except Exception as e:
+            logging.error(f"Ошибка вставки рассчитанных давлений: {str(e)}")
+            raise
+
+    def get_calculated_parameter(self, input_data_id, param_name):
+        """Получает конкретный параметр из calculatedParameters"""
+        try:
+            conn = self.get_connection()
+            query = "SELECT Val FROM calculatedParameters WHERE InputData_ID = ? AND calcParam = ?"
+            df = pd.read_sql(query, conn, params=[input_data_id, param_name])
+            return df.iloc[0]['Val'] if not df.empty else None
+        except Exception as e:
+            logging.error(f"Ошибка получения параметра {param_name}: {str(e)}")
+            return None
+
+    def check_column_types(self, table_name):
+        """Проверяет точные типы данных столбцов в таблице"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Для Access можно попробовать такой запрос
+            cursor.execute(f"SELECT TOP 1 * FROM {table_name}")
+            description = cursor.description
+
+            print(f"\n=== ТИПЫ ДАННЫХ ТАБЛИЦЫ {table_name} ===")
+            for column in description:
+                col_name = column[0]
+                col_type_code = column[1]  # Код типа данных ODBC
+                col_type_name = self.get_odbc_type_name(col_type_code)
+                print(f"{col_name}: {col_type_name} (код: {col_type_code})")
+
+        except Exception as e:
+            print(f"Ошибка при проверке типов данных: {e}")
+
+    def get_odbc_type_name(self, type_code):
+        """Преобразует код типа ODBC в читаемое имя"""
+        odbc_types = {
+            1: 'SQL_CHAR',
+            2: 'SQL_NUMERIC',
+            3: 'SQL_DECIMAL',
+            4: 'SQL_INTEGER',
+            5: 'SQL_SMALLINT',
+            6: 'SQL_FLOAT',
+            7: 'SQL_REAL',
+            8: 'SQL_DOUBLE',
+            9: 'SQL_DATE',
+            10: 'SQL_TIME',
+            11: 'SQL_TIMESTAMP',
+            12: 'SQL_VARCHAR',
+            # ... добавьте другие коды по необходимости
+        }
+        return odbc_types.get(type_code, f'UNKNOWN_TYPE_{type_code}')
+
+    def add_sort_order_to_model_vnk(self):
+        """Добавляет поле для сортировки в таблицу ModelVNK"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Проверяем, есть ли уже поле sort_order
+            cursor.execute("SELECT TOP 1 * FROM ModelVNK")
+            columns = [column[0] for column in cursor.description]
+
+            if 'sort_order' not in columns:
+                # Добавляем поле для сортировки
+                cursor.execute("ALTER TABLE ModelVNK ADD COLUMN sort_order INTEGER")
+                print("Добавлено поле sort_order в ModelVNK")
+            else:
+                print("Поле sort_order уже существует")
+
+            conn.commit()
+
+        except Exception as e:
+            print(f"Ошибка добавления поля сортировки: {e}")
+
+# db = AccessDatabase()
+# db.add_sort_order_to_model_vnk()

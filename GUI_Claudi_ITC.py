@@ -1441,6 +1441,13 @@ class ReportGUI:
         self.calc_time_entry = ttk.Entry(frame_time)
         self.calc_time_entry.pack(side='left', padx=5, fill='x', expand=False)
 
+        # Добавляем поле для давления на последнюю точку
+        pressure_frame = self.create_labeled_frame(self.tab1, "7. Давление на последнюю точку")
+        ttk.Label(pressure_frame, text="Р_п.т.:").pack(padx=3, pady=3)
+        self.pressure_last_point_entry = ttk.Entry(pressure_frame)
+        self.pressure_last_point_entry.pack(padx=3, pady=3)
+
+
     def change_button_color(self, button, success=True):
         """Изменяет цвет кнопки на зеленый (успех) или сбрасывает (ошибка)."""
         if success:
@@ -1518,7 +1525,7 @@ class ReportGUI:
         self.vnkp_pl4_entry.pack(side='left', padx=5)
 
     def setup_tab2(self):
-        frame6 = self.create_labeled_frame(self.tab2, f"6. {self.section_params[2]['description']}")
+        frame6 = self.create_labeled_frame(self.tab2, f"8. {self.section_params[2]['description']}")
 
         # NEW: Кнопки с отслеживанием нажатия
         self.model_button = ttk.Button(
@@ -1535,7 +1542,7 @@ class ReportGUI:
         )
         self.model_button2.pack(padx=3, pady=3)
 
-        frame7 = self.create_labeled_frame(self.tab2, f"7. {self.section_params[3]['description']}")
+        frame7 = self.create_labeled_frame(self.tab2, f"9. {self.section_params[3]['description']}")
 
         self.pressure_button = ttk.Button(
             frame7,
@@ -1554,37 +1561,18 @@ class ReportGUI:
     def paste_research_params(self):
         """Вставляет параметры исследования из буфера обмена"""
         try:
-            # Проверяем, есть ли данные в буфере обмена
             clipboard_data = self.root.clipboard_get()
             if not clipboard_data.strip():
-                messagebox.showerror("Ошибка", "Буфер обмена пуст. Скопируйте данные перед вставкой.")
+                messagebox.showerror("Ошибка", "Буфер обмена пуст.")
                 return
 
-            # Разделяем данные на строки и столбцы
-            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
-            if not rows:
-                messagebox.showerror("Ошибка", "Нет данных для вставки")
-                return
-
-            # Обрабатываем данные
-            params = {}
-            for row in rows:
-                if len(row) >= 2:
-                    param_name = row[0].strip()
-                    param_value = row[1].strip()
-                    if param_name and param_value:
-                        converted_value = ReportGUI.convert_value(param_value)
-                        if converted_value is not None:
-                            params[param_name] = converted_value
-
-            # Убеждаемся, что есть основная запись
             main_data_id = self.ensure_main_data_exists()
             if main_data_id is None:
                 messagebox.showerror("Ошибка", "Не удалось создать основную запись!")
                 return
 
-            # Сохраняем параметры исследования
-            self.db.insert_research_params(main_data_id, 1, params)
+            # Используем новый метод для трехколоночных данных
+            self.db.insert_all_calculated_parameters_from_clipboard(main_data_id, clipboard_data)
             messagebox.showinfo("Успех", "Параметры исследования сохранены успешно")
 
         except Exception as e:
@@ -1619,7 +1607,7 @@ class ReportGUI:
                 messagebox.showerror("Ошибка", "Не удалось создать основную запись!")
                 return
 
-            self.db.insert_research_params(main_data_id, 2, params)
+            self.db.insert_all_calculated_parameters_from_clipboard(main_data_id,params)
             messagebox.showinfo("Успех", "Параметры исследования_2 сохранены успешно")
 
         except Exception as e:
@@ -1768,42 +1756,6 @@ class ReportGUI:
         }
         return button_map.get(section)
 
-    def paste_data_to_db(self, data, section_number):
-        """Вставляет данные в соответствующие таблицы БД"""
-        try:
-            data = clean_text(data)
-            rows = [r.split('\t') for r in data.split('\n') if r.strip()]
-
-            if not rows:
-                messagebox.showerror("Ошибка", "Нет данных для вставки")
-                return False
-
-            # Получаем ID последней записи
-            last_record = self.db.get_last_record()
-            if last_record.empty:
-                messagebox.showerror("Ошибка", "Сначала вставьте основные данные!")
-                return False
-            main_data_id = last_record.iloc[0]['ID']
-
-            if section_number == 1:  # Основные данные
-                self.process_main_data(rows)
-            elif section_number == 2:  # Модель
-                self.process_model_data(rows, main_data_id)
-            elif section_number == 3:  # Давление
-                self.process_pressure_data(rows, main_data_id)
-            elif section_number == 4:  # Параметры
-                self.process_parameters_data(rows, main_data_id)
-            elif section_number == 5:  # Модель_2
-                self.process_model_data(rows, main_data_id, "_2")
-            elif section_number == 6:  # Давление_2
-                self.process_pressure_data(rows, main_data_id, "_2")
-
-            return True
-
-        except Exception as e:
-            logging.error(f"Ошибка при вставке данных: {str(e)}")
-            messagebox.showerror("Ошибка", f"Ошибка при вставке данных: {str(e)}")
-            return False
 
     def process_parameters_data(self, rows, main_data_id):
         """Обрабатывает параметры исследования"""
@@ -1816,10 +1768,139 @@ class ReportGUI:
                     params[param_name] = param_value
 
         try:
-            self.db.insert_calculated_parameters(main_data_id, params)
+            self.db.insert_all_calculated_parameters_from_clipboard(main_data_id, params)
             messagebox.showinfo("Успех", "Параметры исследования сохранены в БД")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка при сохранении параметров: {str(e)}")
+
+    def paste_calculated_parameters(self):
+        """Вставляет calculatedParameters из буфера обмена"""
+        try:
+            clipboard_data = self.root.clipboard_get()
+            if not clipboard_data.strip():
+                messagebox.showerror("Ошибка", "Буфер обмена пуст!")
+                return
+
+            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
+
+            main_data_id = self.ensure_main_data_exists()
+            if main_data_id is None:
+                messagebox.showerror("Ошибка", "Нет основной записи!")
+                return
+
+            params = {}
+            for row in rows:
+                if len(row) >= 2:
+                    param_name = row[0].strip()
+                    param_value = row[1].strip()
+                    if param_name and param_value:
+                        params[param_name] = ReportGUI.convert_value(param_value)
+
+            if params:
+                self.db.insert_all_calculated_parameters_from_clipboard(main_data_id, params)
+                messagebox.showinfo("Успех", "Параметры сохранены!")
+            else:
+                messagebox.showinfo("Информация", "Нет данных для сохранения")
+
+        except Exception as e:
+            logging.error(f"Ошибка вставки параметров: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка: {str(e)}")
+
+
+    def paste_model_ksd(self):
+        """Вставляет данные ModelKSD из буфера обмена"""
+        try:
+            clipboard_data = self.root.clipboard_get()
+            if not clipboard_data.strip():
+                messagebox.showerror("Ошибка", "Буфер обмена пуст!")
+                return
+
+            rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
+
+            main_data_id = self.ensure_main_data_exists()
+            if main_data_id is None:
+                messagebox.showerror("Ошибка", "Нет основной записи!")
+                return
+
+            data = []
+            for row in rows:
+                if len(row) >= 3:  # 3 столбца: empty, Dat, PressureVnkModel
+                    data.append({
+                        'empty': row[0].strip(),
+                        'Dat': ReportGUI.convert_value(row[1].strip()),
+                        'PressureVnkModel': ReportGUI.convert_value(row[2].strip())
+                    })
+
+            if data:
+                self.db.insert_model_ksd(main_data_id, data)
+                messagebox.showinfo("Успех", "Данные ModelKSD сохранены!")
+            else:
+                messagebox.showinfo("Информация", "Нет данных для сохранения")
+
+        except Exception as e:
+            logging.error(f"Ошибка вставки ModelKSD: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка: {str(e)}")
+
+
+    def calculate_pressure_values(self, main_data_id):
+        """Рассчитывает значения для calculatedPressure"""
+        try:
+            # Получаем необходимые данные
+            vid_issledovaniya = self.db.get_vid_issledovaniya(main_data_id)
+            pzab_vnk = None
+            ppl_vnk = None
+
+            # Логика расчета PzabVnk
+            if vid_issledovaniya and any(x in vid_issledovaniya.upper() for x in ['КСД', 'АДД']):
+                # Для КСД/АДД - последнее значение из PressureVNK
+                last_pressure = self.db.get_last_pressure_vnk(main_data_id)
+                pzab_vnk = last_pressure
+            else:
+                # Для других - параметр из calculatedParameters
+                p_param = self.db.get_calculated_parameter(main_data_id, 'P @ dt=0')
+                pzab_vnk = p_param
+
+            # Логика расчета PplVnk
+            has_model_vnk = self.db.has_model_vnk_data(main_data_id)
+            has_model_ksd = self.db.has_model_ksd_data(main_data_id)
+
+            if has_model_vnk:
+                # Берем последнее значение из ModelVNK
+                ppl_vnk = self.db.get_last_model_vnk_pressure(main_data_id)
+            elif vid_issledovaniya and any(x in vid_issledovaniya.upper() for x in ['КСД', 'АДД']):
+                # Для КСД/АДД - последнее значение из ModelKSD
+                ppl_vnk = self.db.get_last_model_ksd_pressure(main_data_id)
+            elif vid_issledovaniya and 'ГРП' not in vid_issledovaniya.upper():
+                # Для не-ГРП - параметр из calculatedParameters
+                initial_pressure = self.db.get_calculated_parameter(main_data_id, 'Начальное пластовое давление')
+                ppl_vnk = initial_pressure
+            else:
+                # По умолчанию - значение из окошка Р_п.т.
+                ppl_vnk = ReportGUI.convert_value(self.pressure_last_point_entry.get())
+
+            # Получаем поправки
+            amendments = self.db.get_amendments(main_data_id)
+
+            # Рассчитываем остальные параметры
+            calculated_data = {
+                'PplVnk': ppl_vnk,
+                'PzabVnk': pzab_vnk,
+                'PplGlubZam': ppl_vnk - amendments.get('amendVnkPpl', 0),
+                'PplVdp': (ppl_vnk - amendments.get('amendVnkPpl', 0)) + amendments.get('amendVdpPpl', 0),
+                'PplGnk': (ppl_vnk - amendments.get('amendVnkPpl', 0)) + amendments.get('amendGnkPpl', 0),
+                'PzabGlubZam': pzab_vnk - amendments.get('amendVnkPzab', 0),
+                'PzabVdp': (pzab_vnk - amendments.get('amendVnkPzab', 0)) + amendments.get('amendVdpPzab', 0),
+                'PzabGnk': (pzab_vnk - amendments.get('amendVnkPzab', 0)) + amendments.get('amendGnkPzab', 0)
+            }
+
+            # Сохраняем рассчитанные данные
+            self.db.insert_calculated_pressure(main_data_id, calculated_data)
+
+            return calculated_data
+
+        except Exception as e:
+            logging.error(f"Ошибка расчета давлений: {str(e)}")
+            raise
 
     def save_to_db(self):
         """Сохраняет данные из полей ввода в соответствующие таблицы"""
@@ -1857,16 +1938,79 @@ class ReportGUI:
             if density_pl:
                 update_data['density_pl'] = ReportGUI.convert_value(density_pl)
 
+            # Давление на последнюю точку
+            pressure_pt = self.pressure_last_point_entry.get()
+            if pressure_pt:
+                self.db.insert_pressure_last_point(main_data_id, ReportGUI.convert_value(pressure_pt))
+
+            # Поправки из вашего GUI
+            amendments_data = self.collect_amendments_from_gui()
+            if amendments_data:
+                self.db.insert_amendments(main_data_id, amendments_data)
+
             # Сохраняем данные
             if update_data:
                 self.db.update_main_data(main_data_id, update_data)
-                messagebox.showinfo("Успех", "Данные успешно сохранены в базу данных")
-            else:
-                messagebox.showinfo("Информация", "Нет данных для сохранения")
+
+            messagebox.showinfo("Успех", "Данные успешно сохранены в базу данных")
 
         except Exception as e:
             logging.error(f"Ошибка при сохранении данных: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
+
+    def collect_amendments_from_gui(self):
+        """Собирает поправки из полей ввода GUI"""
+        amendments_data = {}
+
+        # Маппинг ваших полей на имена в базе данных
+        field_mapping = {
+            # Pпл (первая модель)
+            (0, 0): 'amendVnkPpl',  # ВНК Рпл
+            (0, 1): 'amendVdpPpl',  # ВДП Рпл
+            (0, 2): 'amendGnkPpl',  # ГНК Рпл
+
+            # Pзаб (первая модель)
+            (1, 0): 'amendVnkPzab',  # ВНК Рзаб
+            (1, 1): 'amendVdpPzab',  # ВДП Рзаб
+            (1, 2): 'amendGnkPzab',  # ГНК Рзаб
+
+            # Pпл_2 (вторая модель)
+            (2, 0): 'amendVnkPpl2',  # ВНК Рпл_2
+            (2, 1): 'amendVdpPpl2',  # ВДП Рпл_2
+            (2, 2): 'amendGnkPpl2',  # ГНК Рпл_2
+
+            # Pзаб_2 (вторая модель)
+            (3, 0): 'amendVnkPzab2',  # ВНК Рзаб_2
+            (3, 1): 'amendVdpPzab2',  # ВДП Рзаб_2
+            (3, 2): 'amendGnkPzab2',  # ГНК Рзаб_2
+        }
+
+        # Собираем данные из всех полей
+        all_entries = [
+            self.ppl_entries,  # Pпл
+            self.pzab_entries,  # Pзаб
+            self.ppl2_entries,  # Pпл_2
+            self.pzab2_entries  # Pзаб_2
+        ]
+
+        for col_idx, entries in enumerate(all_entries):
+            for row_idx, entry in enumerate(entries):
+                value = entry.get().strip()
+                if value:
+                    field_name = field_mapping.get((col_idx, row_idx))
+                    if field_name:
+                        amendments_data[field_name] = ReportGUI.convert_value(value)
+
+        # Дополнительные поправки
+        vnk_pl3 = self.vnkp_pl3_entry.get().strip()
+        if vnk_pl3:
+            amendments_data['amendVnkPpl3'] = ReportGUI.convert_value(vnk_pl3)
+
+        vnk_pl4 = self.vnkp_pl4_entry.get().strip()
+        if vnk_pl4:
+            amendments_data['amendVnkPpl4'] = ReportGUI.convert_value(vnk_pl4)
+
+        return amendments_data
 
     def process_main_data(self, rows):
         """Обрабатывает основные данные (секция 1) и сохраняет в базу"""
@@ -1950,61 +2094,94 @@ class ReportGUI:
         return self.current_main_data_id
 
     def process_model_data(self, rows, section):
-        """Обрабатывает данные модели (секция 2 или 5)"""
-        params = {}
+        """Обрабатывает данные модели для ModelVNK"""
+        data_list = []
         for row in rows:
-            if len(row) >= 2:
-                param_name = row[0].strip()
-                param_value = self.convert_value(row[1].strip())
-                if param_name and param_value is not None:
-                    params[param_name] = param_value
+            if len(row) >= 4:
+                # Пропускаем заголовки
+                if row[1].strip() == "DT" or row[2].strip() == "DP" or row[3].strip() == "DP'":
+                    continue
+                if row[1].strip() == "(ч)" or row[2].strip() == "(кг/см^2 )":
+                    continue
 
-        # Используем последнюю запись или явно переданный ID
-        main_data_id = getattr(self, 'current_main_data_id', None)
+                data_list.append({
+                    'empty': row[0].strip(),
+                    'DT': row[1].strip(),
+                    'deltaP': row[2].strip(),
+                    'DP': row[3].strip()
+                })
+
+        main_data_id = self.ensure_main_data_exists()
         if main_data_id is None:
-            last_record = self.db.get_last_record()
-            if not last_record.empty:
-                main_data_id = last_record.iloc[0]['id']  # Исправлено: 'id' вместо 'ID'
-            else:
-                logging.error("Нет основной записи для привязки параметров модели")
-                messagebox.showerror("Ошибка", "Сначала вставьте основные данные!")
-                return
+            messagebox.showerror("Ошибка", "Сначала вставьте основные данные!")
+            return
 
         try:
-            # Исправленный вызов метода
-            self.db.insert_research_params(main_data_id, section, params)
-            messagebox.showinfo("Успех", "Параметры модели сохранены в базу данных")
+            # Вставляем данные
+            self.db.insert_model_vnk(main_data_id, data_list)
+
+            messagebox.showinfo("Успех", "Данные модели сохранены в правильном порядке!")
+
         except Exception as e:
             logging.error(f"Ошибка при сохранении параметров модели: {str(e)}")
-            messagebox.showerror("Ошибка", f"Ошибка при сохранении параметров: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка: {str(e)}")
+
 
     def process_pressure_data(self, rows, section):
-        """Обрабатывает данные давления (секция 3 или 6)"""
-        params = {}
+        """Обрабатывает данные давления (секция 3) и сохраняет в PressureVNK"""
+        data_list = []
         for row in rows:
             if len(row) >= 2:
-                param_name = row[0].strip()
-                param_value = self.convert_value(row[1].strip())
-                if param_name and param_value is not None:
-                    params[param_name] = param_value
+                # Пропускаем заголовки
+                if row[0].strip() == "Абсолютное время" or row[1].strip() == "кг/см^2":
+                    continue
+
+                data_list.append({
+                    'Dat': ReportGUI.convert_value(row[0].strip()),
+                    'PressureVnk': ReportGUI.convert_value(row[1].strip())
+                })
 
         main_data_id = getattr(self, 'current_main_data_id', None)
         if main_data_id is None:
             last_record = self.db.get_last_record()
             if not last_record.empty:
-                main_data_id = last_record.iloc[0]['id']  # Исправлено: 'id' вместо 'ID'
+                main_data_id = last_record.iloc[0]['id']
             else:
                 logging.error("Нет основной записи для привязки данных давления")
                 messagebox.showerror("Ошибка", "Сначала вставьте основные данные!")
                 return
 
         try:
-            # Исправленный вызов метода
-            self.db.insert_research_params(main_data_id, section, params)
+            # ИСПРАВЛЕНО: вставляем в PressureVNK
+            self.db.insert_pressure_vnk(main_data_id, data_list)
             messagebox.showinfo("Успех", "Данные давления сохранены в базу данных")
         except Exception as e:
             logging.error(f"Ошибка при сохранении данных давления: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
+
+    def calculate_and_save_pressure(self):
+        """Вызывает расчет давлений и сохраняет результат"""
+        try:
+            main_data_id = self.ensure_main_data_exists()
+            if main_data_id is None:
+                messagebox.showerror("Ошибка", "Нет основной записи!")
+                return
+
+            # Получаем значение из окошка "Р_п.т."
+            pressure_pt = self.pressure_last_point_entry.get()
+            pressure_value = ReportGUI.convert_value(pressure_pt) if pressure_pt else None
+
+            # Вызываем расчет в базе данных
+            calculated_data = self.db.calculate_pressure_values(main_data_id, pressure_value)
+
+            if calculated_data:
+                messagebox.showinfo("Успех", "Давления успешно рассчитаны и сохранены!")
+            else:
+                messagebox.showinfo("Информация", "Недостаточно данных для расчета давлений")
+
+        except Exception as e:
+            logging.error(f"Ошибка расчета давлений: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка расчета: {str(e)}")
 
     @staticmethod
     def convert_value(value):
