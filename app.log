@@ -1,2 +1,41 @@
-2025-09-01 17:33:15,901 - utils - INFO - Успешное подключение к базе данных: C:\Work\GUI_ITC\research_data.accdb
-2025-09-01 17:33:15,976 - utils - INFO - Соединение с базой данных закрыто.
+2025-09-02 01:25:01,367 - utils - INFO - Успешное подключение к базе данных: C:\Work\GUI_ITC\research_data.accdb
+2025-09-02 01:25:07,311 - utils - INFO - Все данные из таблиц успешно удалены.
+2025-09-02 01:25:07,312 - root - INFO - База данных очищена при запуске
+2025-09-02 01:25:35,016 - root - INFO - Данные успешно добавлены в InputData с ID: 58
+2025-09-02 01:25:35,016 - root - INFO - Основные данные сохранены с ID: 58
+2025-09-02 01:25:54,314 - root - INFO - Поправки сохранены для записи ID: 58
+2025-09-02 01:25:54,316 - root - INFO - Успешность сохранена для записи ID: 58
+2025-09-02 01:25:54,317 - root - INFO - Класс исследования сохранен для записи ID: 58
+2025-09-02 01:25:54,318 - root - INFO - Расчетное время сохранено для записи ID: 58
+2025-09-02 01:25:54,319 - root - INFO - Плотность сохранена для записи ID: 58
+2025-09-02 01:25:54,320 - root - INFO - Все данные для записи 58 обновлены
+2025-09-02 01:27:05,319 - root - INFO - Данные PressureVNK сохранены для записи ID: 58
+2025-09-02 01:27:39,568 - root - INFO - Данные ModelVNK сохранены для ID: 58
+2025-09-02 01:28:05,129 - root - INFO - Поправки сохранены для записи ID: 58
+2025-09-02 01:28:05,132 - root - ERROR - Ошибка вставки успешности: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:28:05,132 - root - ERROR - Ошибка обновления данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:28:05,132 - root - ERROR - Ошибка при сохранении данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:28:28,228 - root - INFO - Поправки сохранены для записи ID: 58
+2025-09-02 01:28:28,228 - root - ERROR - Ошибка вставки успешности: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:28:28,228 - root - ERROR - Ошибка обновления данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:28:28,229 - root - ERROR - Ошибка при сохранении данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:28:46,911 - root - INFO - Поправки сохранены для записи ID: 58
+2025-09-02 01:28:46,911 - root - ERROR - Ошибка вставки успешности: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:28:46,912 - root - ERROR - Ошибка обновления данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:28:46,912 - root - ERROR - Ошибка при сохранении данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
+2025-09-02 01:29:24,619 - root - ERROR - Ошибка получения давления ModelVNK: ('07002', '[07002] [Microsoft][ODBC Microsoft Access Driver] Too few parameters. Expected 2. (-3010) (SQLExecDirectW)')
+2025-09-02 01:29:24,622 - root - INFO - Рассчитанные давления сохранены для записи ID: 58
+2025-09-02 01:29:24,623 - root - INFO - Рассчитанные давления сохранены: {'PzabVnk': 113.4000015258789, 'PzabGlubZam': 112.4000015258789, 'PzabVdp': 113.4000015258789, 'PzabGnk': 113.4000015258789}
+2025-09-02 01:29:24,623 - root - INFO - Рассчитанные давления: {'PzabVnk': 113.4000015258789, 'PzabGlubZam': 112.4000015258789, 'PzabVdp': 113.4000015258789, 'PzabGnk': 113.4000015258789}
+2025-09-02 01:29:24,624 - root - ERROR - Ошибка получения последнего давления: ('07002', '[07002] [Microsoft][ODBC Microsoft Access Driver] Too few parameters. Expected 2. (-3010) (SQLExecDirectW)')
+2025-09-02 01:29:24,661 - root - INFO - Таблица calculate обновлена
+2025-09-02 01:29:24,661 - root - INFO - Таблица calculate успешно обновлена
+2025-09-02 01:34:53,641 - utils - INFO - Соединение с базой данных закрыто.
+C:\Work\GUI_ITC\db_access.py:1030: UserWarning:
+
+pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+
+C:\Work\GUI_ITC\db_access.py:649: UserWarning:
+
+pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+

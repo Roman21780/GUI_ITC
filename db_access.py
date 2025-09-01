@@ -75,9 +75,10 @@ class AccessDatabase:
         cursor = conn.cursor()
         tables = [
             'dampingTable', 'calculatedPressure', 'calculatedParameters',
-            'amendments', 'Parameters', 'InputData',
+            'amendments', 'InputData',
             'researchClass', 'success', 'density', 'estimatedTime',
-            'ModelVNK', 'PressureVNK', 'pressureLastPoint', 'TextParameters', 'ModelKSD'
+            'ModelVNK', 'PressureVNK', 'pressureLastPoint', 'TextParameters',
+            'ModelKSD', 'calculate'
         ]
         try:
             for table in tables:
@@ -368,9 +369,10 @@ class AccessDatabase:
         """Проверяет есть ли данные в ModelVNK"""
         try:
             conn = self.get_connection()
-            query = "SELECT COUNT(*) as count FROM ModelVNK WHERE InputData_ID = ?"
-            df = pd.read_sql(query, conn, params=[input_data_id])
-            return df.iloc[0]['count'] > 0
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM ModelVNK WHERE InputData_ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+            return result[0] > 0 if result else False
         except Exception as e:
             logging.error(f"Ошибка проверки ModelVNK: {str(e)}")
             return False
@@ -379,15 +381,19 @@ class AccessDatabase:
         """Получает последнее значение PressureVnkModel из ModelVNK"""
         try:
             conn = self.get_connection()
-            query = """
-                    SELECT TOP 1 PressureVnkModel \
-                    FROM ModelVNK
-                    WHERE InputData_ID = ? \
-                      AND PressureVnkModel IS NOT NULL
-                    ORDER BY ID DESC \
-                    """
-            df = pd.read_sql(query, conn, params=[input_data_id])
-            return df.iloc[0]['PressureVnkModel'] if not df.empty else None
+            cursor = conn.cursor()
+
+            # Простой запрос без сложных условий
+            cursor.execute("""
+                           SELECT TOP 1 PressureVnkModel
+                           FROM ModelVNK
+                           WHERE InputData_ID = ?
+                           ORDER BY ID DESC
+                           """, (input_data_id,))
+
+            result = cursor.fetchone()
+            return result[0] if result else None
+
         except Exception as e:
             logging.error(f"Ошибка получения давления ModelVNK: {str(e)}")
             return None
@@ -424,22 +430,24 @@ class AccessDatabase:
             logging.error(f"Ошибка вставки PressureVNK: {str(e)}")
             raise
 
-
     def get_last_pressure_vnk(self, input_data_id):
         """Получает последнее значение PressureVnk из PressureVNK"""
         try:
             conn = self.get_connection()
-            query = """
-                    SELECT TOP 1 PressureVnk \
-                    FROM PressureVNK
-                    WHERE InputData_ID = ? \
-                      AND PressureVnk IS NOT NULL
-                    ORDER BY ID DESC \
-                    """
-            df = pd.read_sql(query, conn, params=[input_data_id])
-            return df.iloc[0]['PressureVnk'] if not df.empty else None
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                           SELECT TOP 1 PressureVnk
+                           FROM PressureVNK
+                           WHERE InputData_ID = ?
+                           ORDER BY ID DESC
+                           """, (input_data_id,))
+
+            result = cursor.fetchone()
+            return result[0] if result else None
+
         except Exception as e:
-            logging.error(f"Ошибка получения давления PressureVNK: {str(e)}")
+            logging.error(f"Ошибка получения последнего давления: {str(e)}")
             return None
 
     def insert_model_ksd(self, input_data_id, data_list):
@@ -479,9 +487,10 @@ class AccessDatabase:
         """Проверяет есть ли данные в ModelKSD"""
         try:
             conn = self.get_connection()
-            query = "SELECT COUNT(*) as count FROM ModelKSD WHERE InputData_ID = ?"
-            df = pd.read_sql(query, conn, params=[input_data_id])
-            return df.iloc[0]['count'] > 0
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM ModelKSD WHERE InputData_ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+            return result[0] > 0 if result else False
         except Exception as e:
             logging.error(f"Ошибка проверки ModelKSD: {str(e)}")
             return False
@@ -937,7 +946,8 @@ class AccessDatabase:
             ppl_vnk = None
 
             # Логика расчета PzabVnk
-            if vid_issledovaniya and any(x in vid_issledovaniya.upper() for x in ['КСД', 'АДД']):
+            vid_upper = (vid_issledovaniya or '').upper()
+            if vid_issledovaniya and any(x in vid_upper for x in ['КСД', 'АДД']):
                 last_pressure = self.get_last_pressure_vnk(input_data_id)
                 pzab_vnk = last_pressure
             else:
@@ -950,46 +960,43 @@ class AccessDatabase:
 
             if has_model_vnk:
                 ppl_vnk = self.get_last_model_vnk_pressure(input_data_id)
-            elif vid_issledovaniya and any(x in vid_issledovaniya.upper() for x in ['КСД', 'АДД']):
+            elif vid_issledovaniya and any(x in vid_upper for x in ['КСД', 'АДД']):
                 ppl_vnk = self.get_last_model_ksd_pressure(input_data_id)
-            elif vid_issledovaniya and 'ГРП' not in vid_issledovaniya.upper():
+            elif vid_issledovaniya and 'ГРП' in vid_upper:
                 initial_pressure = self.get_calculated_parameter(input_data_id, 'Начальное пластовое давление')
                 ppl_vnk = initial_pressure
             else:
                 ppl_vnk = pressure_last_point  # Используем переданное значение
 
-            # Получаем поправки
-            amendments = self.get_amendments(input_data_id)
+            # Получаем поправки (только основные)
+            amendments = self.get_amendments(input_data_id) or {}
 
-            # Используем поправки из соответствующей модели
-            if has_model_vnk or ('КПД' in str(vid_issledovaniya or '')):
-                # Используем основные поправки (первая модель)
-                amend_vnk_ppl = amendments.get('amendVnkPpl', 0)
-                amend_vdp_ppl = amendments.get('amendVdpPpl', 0)
-                amend_gnk_ppl = amendments.get('amendGnkPpl', 0)
-                amend_vnk_pzab = amendments.get('amendVnkPzab', 0)
-                amend_vdp_pzab = amendments.get('amendVdpPzab', 0)
-                amend_gnk_pzab = amendments.get('amendGnkPzab', 0)
-            else:
-                # Используем вторую модель поправок
-                amend_vnk_ppl = amendments.get('amendVnkPpl2', amendments.get('amendVnkPpl', 0))
-                amend_vdp_ppl = amendments.get('amendVdpPpl2', amendments.get('amendVdpPpl', 0))
-                amend_gnk_ppl = amendments.get('amendGnkPpl2', amendments.get('amendGnkPpl', 0))
-                amend_vnk_pzab = amendments.get('amendVnkPzab2', amendments.get('amendVnkPzab', 0))
-                amend_vdp_pzab = amendments.get('amendVdpPzab2', amendments.get('amendVdpPzab', 0))
-                amend_gnk_pzab = amendments.get('amendGnkPzab2', amendments.get('amendGnkPzab', 0))
+            # Используем основные поправки из таблицы amendments
+            amend_vnk_ppl = amendments.get('amendVnkPpl', 0) or 0
+            amend_vdp_ppl = amendments.get('amendVdpPpl', 0) or 0
+            amend_gnk_ppl = amendments.get('amendGnkPpl', 0) or 0
+            amend_vnk_pzab = amendments.get('amendVnkPzab', 0) or 0
+            amend_vdp_pzab = amendments.get('amendVdpPzab', 0) or 0
+            amend_gnk_pzab = amendments.get('amendGnkPzab', 0) or 0
 
-            # Рассчитываем остальные параметры
-            calculated_data = {
-                'PplVnk': ppl_vnk,
-                'PzabVnk': pzab_vnk,
-                'PplGlubZam': ppl_vnk - amend_vnk_ppl if ppl_vnk is not None else None,
-                'PplVdp': (ppl_vnk - amend_vnk_ppl) + amend_vdp_ppl if ppl_vnk is not None else None,
-                'PplGnk': (ppl_vnk - amend_vnk_ppl) + amend_gnk_ppl if ppl_vnk is not None else None,
-                'PzabGlubZam': pzab_vnk - amend_vnk_pzab if pzab_vnk is not None else None,
-                'PzabVdp': (pzab_vnk - amend_vnk_pzab) + amend_vdp_pzab if pzab_vnk is not None else None,
-                'PzabGnk': (pzab_vnk - amend_vnk_pzab) + amend_gnk_pzab if pzab_vnk is not None else None
-            }
+            # Рассчитываем параметры с проверкой на None
+            calculated_data = {}
+
+            if ppl_vnk is not None:
+                calculated_data.update({
+                    'PplVnk': ppl_vnk,
+                    'PplGlubZam': ppl_vnk - amend_vnk_ppl,
+                    'PplVdp': (ppl_vnk - amend_vnk_ppl) + amend_vdp_ppl,
+                    'PplGnk': (ppl_vnk - amend_vnk_ppl) + amend_gnk_ppl
+                })
+
+            if pzab_vnk is not None:
+                calculated_data.update({
+                    'PzabVnk': pzab_vnk,
+                    'PzabGlubZam': pzab_vnk - amend_vnk_pzab,
+                    'PzabVdp': (pzab_vnk - amend_vnk_pzab) + amend_vdp_pzab,
+                    'PzabGnk': (pzab_vnk - amend_vnk_pzab) + amend_gnk_pzab
+                })
 
             # Фильтруем None значения
             calculated_data = {k: v for k, v in calculated_data.items() if v is not None}
@@ -1268,35 +1275,24 @@ class AccessDatabase:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # 1. P1_zab_vnk - значение из calculatedParameters где calcParam = "P @ dt=0"
-            cursor.execute("""
-                           SELECT Val
-                           FROM calculatedParameters
-                           WHERE InputData_ID = ?
-                             AND calcParam = 'P @ dt=0'
-                           """, (input_data_id,))
-            p1_zab_vnk = cursor.fetchone()
-            p1_zab_vnk = p1_zab_vnk[0] if p1_zab_vnk else None
+            # Очищаем предыдущие расчеты
+            cursor.execute("DELETE FROM calculate WHERE InputData_ID = ?", (input_data_id,))
+
+            # 1. P1_zab_vnk - значение из calculatedParameters
+            p1_zab_vnk = self.get_calculated_parameter(input_data_id, 'P @ dt=0')
 
             # 2. P2_zab_vnk - последнее значение из PressureVNK
-            cursor.execute("""
-                           SELECT TOP 1 PressureVnk
-                           FROM PressureVNK
-                           WHERE InputData_ID = ?
-                           ORDER BY ID DESC
-                           """, (input_data_id,))
-            p2_zab_vnk = cursor.fetchone()
-            p2_zab_vnk = p2_zab_vnk[0] if p2_zab_vnk else None
+            p2_zab_vnk = self.get_last_pressure_vnk(input_data_id)
 
-            # 3. Pday - разница давлений за сутки
+            # 3. Pday - разница давлений за сутки (исправленный синтаксис для Access)
             cursor.execute("""
                            SELECT MAX(PressureVnk) - MIN(PressureVnk)
                            FROM PressureVNK
                            WHERE InputData_ID = ?
-                             AND Dat >= DATEADD('d', -1, (SELECT MAX(Dat) FROM PressureVNK WHERE InputData_ID = ?))
+                             AND Dat >= (SELECT MAX(Dat) FROM PressureVNK WHERE InputData_ID = ?) - 1
                            """, (input_data_id, input_data_id))
-            pday = cursor.fetchone()
-            pday = pday[0] if pday else None
+            result = cursor.fetchone()
+            pday = result[0] if result else None
 
             # 4. P_pl_vnk - значение из calculatedPressure
             cursor.execute("""
@@ -1304,120 +1300,85 @@ class AccessDatabase:
                            FROM calculatedPressure
                            WHERE InputData_ID = ?
                            """, (input_data_id,))
-            p_pl_vnk = cursor.fetchone()
-            p_pl_vnk = p_pl_vnk[0] if p_pl_vnk else None
+            result = cursor.fetchone()
+            p_pl_vnk = result[0] if result else None
 
-            # 5. delta - разница между текущим P_pl_vnk и предыдущим исследованием
+            # 5. delta - разница с предыдущим исследованием
             delta = None
             if p_pl_vnk:
-                # Ищем предыдущее исследование для этой же скважины
                 cursor.execute("""
-                               SELECT i.ID, p.PplVnk
+                               SELECT TOP 1 p.PplVnk
                                FROM InputData i
                                         INNER JOIN prevData p ON i.ID = p.InputData_ID
-                               WHERE i.Skvazhina = (SELECT Skvazhina
-                                                    FROM InputData
-                                                    WHERE ID = ?)
+                               WHERE i.Skvazhina = (SELECT Skvazhina FROM InputData WHERE ID = ?)
                                  AND i.ID != ?
                                ORDER BY i.Data_issledovaniya DESC
                                """, (input_data_id, input_data_id))
+                result = cursor.fetchone()
+                if result:
+                    delta = p_pl_vnk - result[0]
 
-                prev_research = cursor.fetchone()
-                if prev_research:
-                    prev_ppl_vnk = prev_research[1]
-                    delta = p_pl_vnk - prev_ppl_vnk
-                    print(f"Delta calculated: {p_pl_vnk} - {prev_ppl_vnk} = {delta}")
-
-            # 6. productivity - модуль отношения Delta Q к разнице давлений
-            cursor.execute("""
-                           SELECT Val
-                           FROM calculatedParameters
-                           WHERE InputData_ID = ?
-                             AND calcParam = 'Delta Q'
-                           """, (input_data_id,))
-            delta_q = cursor.fetchone()
-            delta_q = delta_q[0] if delta_q else None
-
-            productivity = abs(delta_q / (p1_zab_vnk - p_pl_vnk)) if delta_q and p1_zab_vnk and p_pl_vnk else None
+            # 6. productivity
+            delta_q = self.get_calculated_parameter(input_data_id, 'Delta Q')
+            productivity = abs(delta_q / (p1_zab_vnk - p_pl_vnk)) if all([delta_q, p1_zab_vnk, p_pl_vnk]) else None
 
             # 7. Delta Q
             delta_q_value = delta_q
 
-            # 8. Qoil = Delta Q*(1-Obvodnennost/100)*Vremya_issledovaniya/24
+            # 8. Qoil
             cursor.execute("""
                            SELECT Obvodnennost, Vremya_issledovaniya
                            FROM InputData
                            WHERE ID = ?
                            """, (input_data_id,))
-            input_data = cursor.fetchone()
-
+            result = cursor.fetchone()
             qoil = None
-            if input_data and delta_q:
-                obvodnennost, vremya = input_data
-                qoil = delta_q * (1 - obvodnennost / 100) * vremya / 24
+            if result and delta_q:
+                obvodnennost, vremya = result
+                qoil = delta_q * (1 - obvodnennost / 100) * vremya / 24 if obvodnennost and vremya else None
 
             # 9. Kh/Mu - гидропроводность
-            cursor.execute("""
-                           SELECT Val
-                           FROM calculatedParameters
-                           WHERE InputData_ID = ?
-                             AND calcParam IN ('h', 'k', 'вязкость', 'µгаза')
-                           """, (input_data_id,))
-            params = cursor.fetchall()
-
-            # Получаем тип флюида
-            cursor.execute("""
-                           SELECT Val
-                           FROM calculatedParameters
-                           WHERE InputData_ID = ?
-                             AND calcParam = 'Тип флюида'
-                           """, (input_data_id,))
-            fluid_type = cursor.fetchone()
-            fluid_type = fluid_type[0].lower() if fluid_type else ''
-
             kh_mu = None
-            if params and len(params) >= 3:
-                if 'газ' in fluid_type:
-                    # Для газа: Kh/Mu = (h*100 * k/1000) / µгаза
-                    kh_mu = (params[0][0] * 100 * params[1][0] / 1000) / params[3][0] if len(params) >= 4 else None
-                else:
-                    # Для жидкости: Kh/Mu = (h*100 * k/1000) / вязкость
-                    kh_mu = (params[0][0] * 100 * params[1][0] / 1000) / params[2][0]
+            h = self.get_calculated_parameter(input_data_id, 'h')
+            k = self.get_calculated_parameter(input_data_id, 'k')
+            viscosity = self.get_calculated_parameter(input_data_id, 'вязкость')
+            mu_gas = self.get_calculated_parameter(input_data_id, 'µгаза')
+
+            fluid_type = self.get_calculated_parameter(input_data_id, 'Тип флюида')
+            fluid_type = str(fluid_type or '').lower()
+
+            if all([h, k]):
+                if 'газ' in fluid_type and mu_gas:
+                    kh_mu = (h * 100 * k / 1000) / mu_gas
+                elif viscosity:
+                    kh_mu = (h * 100 * k / 1000) / viscosity
 
             # 10. Rinv_Ppl1
-            cursor.execute("""
-                           SELECT Val
-                           FROM calculatedParameters
-                           WHERE InputData_ID = ?
-                             AND calcParam IN ('k', 'Phi', 'Вязкость', 'µгаза', 'Общая сжимаемость сt')
-                           """, (input_data_id,))
-            rinv_params = cursor.fetchall()
-
             rinv_ppl1 = None
-            if input_data and rinv_params and len(rinv_params) >= 4:
-                vremya = input_data[1]  # Vremya_issledovaniya
-                if 'газ' in fluid_type:
-                    # Для газа
-                    rinv_ppl1 = 0.037 * math.sqrt((rinv_params[0][0] * vremya) /
-                                                  (rinv_params[1][0] * rinv_params[3][0] * rinv_params[4][0]))
-                else:
-                    # Для жидкости
-                    rinv_ppl1 = 0.037 * math.sqrt((rinv_params[0][0] * vremya) /
-                                                  (rinv_params[1][0] * rinv_params[2][0] * rinv_params[4][0]))
+            phi = self.get_calculated_parameter(input_data_id, 'Phi')
+            ct = self.get_calculated_parameter(input_data_id, 'Общая сжимаемость сt')
 
-            # Вставляем или обновляем запись
+            if all([k, phi, vremya]) and result:
+                vremya = result[1]  # Vremya_issledovaniya
+                if 'газ' in fluid_type and mu_gas and ct:
+                    rinv_ppl1 = 0.037 * math.sqrt((k * vremya) / (phi * mu_gas * ct))
+                elif viscosity and ct:
+                    rinv_ppl1 = 0.037 * math.sqrt((k * vremya) / (phi * viscosity * ct))
+
+            # Вставляем запись
             cursor.execute("""
-                           INSERT INTO calculate (P1_zab_vnk, P2_zab_vnk, Pday, P_pl_vnk, delta, productivity,
-                                                  Delta_Q, Qoil, Kh_Mu, Rinv_Ppl1, InputData_ID)
+                           INSERT INTO calculate
+                           (P1_zab_vnk, P2_zab_vnk, Pday, P_pl_vnk, delta, productivity,
+                            Delta_Q, Qoil, Kh_Mu, Rinv_Ppl1, InputData_ID)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                            """, (p1_zab_vnk, p2_zab_vnk, pday, p_pl_vnk, delta, productivity,
                                  delta_q_value, qoil, kh_mu, rinv_ppl1, input_data_id))
 
             conn.commit()
-            print("Таблица calculate обновлена")
+            logging.info("Таблица calculate обновлена")
 
         except Exception as e:
-            print(f"Ошибка обновления calculate: {e}")
+            logging.error(f"Ошибка обновления calculate: {e}")
             raise
 
     def insert_prev_data(self, data_dict):

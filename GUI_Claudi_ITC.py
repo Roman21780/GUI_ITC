@@ -1247,6 +1247,9 @@ class ReportGUI:
         self.save_button = ttk.Button(button_frame, text="Сохранить внесенные данные", command=self.save_to_db)
         self.save_button.pack(side='left', padx=5)
 
+        calculate_btn = ttk.Button(button_frame, text="Произвести расчет", command=self.perform_calculations)
+        calculate_btn.pack(side='left', padx=5)
+
         generate_btn = ttk.Button(button_frame, text="Формировать отчет", command=self.generate_report)
         generate_btn.pack(side='left', padx=5)
 
@@ -1449,66 +1452,6 @@ class ReportGUI:
             logging.error(f"Ошибка вставки ModelKSD: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка: {str(e)}")
 
-
-    def calculate_pressure_values(self, main_data_id):
-        """Рассчитывает значения для calculatedPressure"""
-        try:
-            # Получаем необходимые данные
-            vid_issledovaniya = self.db.get_vid_issledovaniya(main_data_id)
-            pzab_vnk = None
-            ppl_vnk = None
-
-            # Логика расчета PzabVnk
-            if vid_issledovaniya and any(x in vid_issledovaniya.upper() for x in ['КСД', 'АДД']):
-                # Для КСД/АДД - последнее значение из PressureVNK
-                last_pressure = self.db.get_last_pressure_vnk(main_data_id)
-                pzab_vnk = last_pressure
-            else:
-                # Для других - параметр из calculatedParameters
-                p_param = self.db.get_calculated_parameter(main_data_id, 'P @ dt=0')
-                pzab_vnk = p_param
-
-            # Логика расчета PplVnk
-            has_model_vnk = self.db.has_model_vnk_data(main_data_id)
-            has_model_ksd = self.db.has_model_ksd_data(main_data_id)
-
-            if has_model_vnk:
-                # Берем последнее значение из ModelVNK
-                ppl_vnk = self.db.get_last_model_vnk_pressure(main_data_id)
-            elif vid_issledovaniya and any(x in vid_issledovaniya.upper() for x in ['КСД', 'АДД']):
-                # Для КСД/АДД - последнее значение из ModelKSD
-                ppl_vnk = self.db.get_last_model_ksd_pressure(main_data_id)
-            elif vid_issledovaniya and 'ГРП' not in vid_issledovaniya.upper():
-                # Для не-ГРП - параметр из calculatedParameters
-                initial_pressure = self.db.get_calculated_parameter(main_data_id, 'Начальное пластовое давление')
-                ppl_vnk = initial_pressure
-            else:
-                # По умолчанию - значение из окошка Р_п.т.
-                ppl_vnk = ReportGUI.convert_value(self.pressure_last_point_entry.get())
-
-            # Получаем поправки
-            amendments = self.db.get_amendments(main_data_id)
-
-            # Рассчитываем остальные параметры
-            calculated_data = {
-                'PplVnk': ppl_vnk,
-                'PzabVnk': pzab_vnk,
-                'PplGlubZam': ppl_vnk - amendments.get('amendVnkPpl', 0),
-                'PplVdp': (ppl_vnk - amendments.get('amendVnkPpl', 0)) + amendments.get('amendVdpPpl', 0),
-                'PplGnk': (ppl_vnk - amendments.get('amendVnkPpl', 0)) + amendments.get('amendGnkPpl', 0),
-                'PzabGlubZam': pzab_vnk - amendments.get('amendVnkPzab', 0),
-                'PzabVdp': (pzab_vnk - amendments.get('amendVnkPzab', 0)) + amendments.get('amendVdpPzab', 0),
-                'PzabGnk': (pzab_vnk - amendments.get('amendVnkPzab', 0)) + amendments.get('amendGnkPzab', 0)
-            }
-
-            # Сохраняем рассчитанные данные
-            self.db.insert_calculated_pressure(main_data_id, calculated_data)
-
-            return calculated_data
-
-        except Exception as e:
-            logging.error(f"Ошибка расчета давлений: {str(e)}")
-            raise
 
     def save_to_db(self):
         """Сохраняет данные из полей ввода в соответствующие таблицы"""
@@ -1994,6 +1937,61 @@ class ReportGUI:
             os.system('taskkill /f /im excel.exe')
         except Exception as e:
             logging.warning(f"Ошибка при завершении процесса Excel: {str(e)}")
+
+    def perform_calculations(self):
+        """Выполняет расчеты для таблиц calculate и calculatedPressure"""
+        try:
+            # Получаем ID основной записи
+            main_data_id = self.ensure_main_data_exists()
+            if main_data_id is None:
+                messagebox.showerror("Ошибка", "Нет основной записи для расчета!")
+                return
+
+            # 1. Расчет для calculatedPressure
+            try:
+                calculated_data = self.calculate_and_save_pressure_values(main_data_id)
+                if calculated_data:
+                    logging.info(f"Рассчитанные давления: {calculated_data}")
+                else:
+                    logging.warning("Не удалось рассчитать давления")
+            except Exception as e:
+                logging.error(f"Ошибка расчета давлений: {str(e)}")
+                messagebox.showerror("Ошибка", f"Ошибка расчета давлений: {str(e)}")
+                return
+
+            # 2. Расчет для calculate таблицы
+            try:
+                self.db.update_calculate_table(main_data_id)
+                logging.info("Таблица calculate успешно обновлена")
+            except Exception as e:
+                logging.error(f"Ошибка обновления таблицы calculate: {str(e)}")
+                messagebox.showerror("Ошибка", f"Ошибка обновления таблицы calculate: {str(e)}")
+                return
+
+            messagebox.showinfo("Успех", "Расчеты успешно выполнены!\n\n"
+                                         "• Рассчитаны давления (calculatedPressure)\n"
+                                         "• Обновлена таблица calculate")
+
+        except Exception as e:
+            logging.error(f"Общая ошибка при выполнении расчетов: {str(e)}")
+            messagebox.showerror("Ошибка", f"Ошибка при выполнении расчетов: {str(e)}")
+
+    def calculate_and_save_pressure_values(self, main_data_id):
+        """Рассчитывает и сохраняет значения для calculatedPressure"""
+        try:
+            # Вызываем расчет в базе данных
+            calculated_data = self.db.calculate_pressure_values(main_data_id)
+
+            if calculated_data:
+                logging.info(f"Рассчитанные давления сохранены: {calculated_data}")
+                return calculated_data
+            else:
+                logging.warning("Не удалось рассчитать давления")
+                return None
+
+        except Exception as e:
+            logging.error(f"Ошибка расчета давлений: {str(e)}")
+            raise
 
     def generate_report_logic(self, doc, output_file_path, selected_template):
         import win32com.client
