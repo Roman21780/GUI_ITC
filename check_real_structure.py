@@ -23,7 +23,9 @@ def check_real_structures():
             'ModelVNK',
             'PressureVNK',
             'amendments',
-            'ModelKSD'
+            'ModelKSD',
+            'calculate',
+            'prevData'
         ]
 
         for table in tables:
@@ -54,7 +56,9 @@ def check_column_types():
             'ModelVNK',
             'PressureVNK',
             'amendments',
-            'ModelKSD'
+            'ModelKSD',
+            'calculate',
+            'prevData'
         ]
 
         for table in tables:
@@ -88,5 +92,5 @@ def get_odbc_type_name(self, type_code):
 
 
 if __name__ == "__main__":
-    # check_real_structures()
-    check_column_types()
+    check_real_structures()
+    # check_column_types()

@@ -4,6 +4,7 @@ from utils import logger, logging
 import pandas as pd
 from datetime import datetime
 from tkinter import messagebox
+import math
 
 class AccessDatabase:
     def __init__(self, db_path='research_data.accdb'):
@@ -220,46 +221,27 @@ class AccessDatabase:
             logging.error(f"Ошибка вставки параметров: {str(e)}")
             raise
 
-    def insert_model_vnk(self, input_data_id, data_list, research_type=None):
+    def insert_model_vnk(self, input_data_id, data_list):
         """Вставляет данные в ModelVNK с сохранением порядка"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            print(f"=== ВСТАВКА С СОХРАНЕНИЕМ ПОРЯДКА ===")
-
             inserted_count = 0
 
             for i, data in enumerate(data_list):
-                # Преобразуем значения
-                dt_value = self.convert_scientific_notation(data.get('DT', '0'))
-                dp_value = self.convert_scientific_notation(data.get('DP', '0'))
-                delta_p_value = self.convert_scientific_notation(data.get('deltaP', '0'))
-
-                if None in [dt_value, dp_value, delta_p_value]:
-                    continue
-
-                try:
-                    # Вставляем с порядковым номером
-                    sql = """INSERT INTO ModelVNK (empty, DT, deltaP, DP, InputData_ID, sort_order)
-                             VALUES (?, ?, ?, ?, ?, ?)"""
-                    cursor.execute(sql, (
-                        data.get('empty', ''),
-                        dt_value,
-                        delta_p_value,
-                        dp_value,
-                        input_data_id,
-                        i  # Порядковый номер для сортировки
-                    ))
-                    inserted_count += 1
-
-                except Exception as insert_error:
-                    print(f"Ошибка вставки записи {i}: {insert_error}")
-                    # Продолжаем вставку остальных записей
+                sql = "INSERT INTO ModelVNK (empty, Dat, PressureVnkModel, InputData_ID, sort_order) VALUES (?, ?, ?, ?, ?)"
+                cursor.execute(sql, (
+                    data.get('empty', ''),
+                    data.get('Dat'),
+                    data.get('PressureVnkModel'),
+                    input_data_id,
+                    i  # Порядковый номер для сортировки
+                ))
+                inserted_count += 1
 
             conn.commit()
             print(f"Успешно вставлено записей: {inserted_count}")
-
             logging.info(f"Данные ModelVNK сохранены для ID: {input_data_id}")
 
         except Exception as e:
@@ -461,22 +443,33 @@ class AccessDatabase:
             return None
 
     def insert_model_ksd(self, input_data_id, data_list):
-        """Вставляет данные в ModelKSD"""
+        """Вставляет данные в ModelKSD с сохранением порядка"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            for data in data_list:
-                sql = "INSERT INTO ModelKSD (InputData_ID, empty, Dat, PressureVnkModel) VALUES (?, ?, ?, ?)"
-                cursor.execute(sql, (
-                    input_data_id,
-                    data.get('empty'),
-                    data.get('Dat'),
-                    data.get('PressureVnkModel')
-                ))
+            inserted_count = 0
+
+            for i, data in enumerate(data_list):
+                try:
+                    sql = """INSERT INTO ModelKSD (empty, Dat, PressureVnkModel, InputData_ID, sort_order)
+                             VALUES (?, ?, ?, ?, ?)"""
+                    cursor.execute(sql, (
+                        data.get('empty', ''),
+                        data.get('Dat'),
+                        data.get('PressureVnkModel'),
+                        input_data_id,
+                        i  # Порядковый номер
+                    ))
+                    inserted_count += 1
+
+                except Exception as insert_error:
+                    print(f"Ошибка вставки записи {i}: {insert_error}")
+                    continue
 
             conn.commit()
-            logging.info(f"Данные ModelKSD сохранены для записи ID: {input_data_id}")
+            print(f"Успешно вставлено записей: {inserted_count}")
+            logging.info(f"Данные ModelKSD сохранены для ID: {input_data_id}")
 
         except Exception as e:
             logging.error(f"Ошибка вставки ModelKSD: {str(e)}")
@@ -1061,15 +1054,152 @@ class AccessDatabase:
             raise
 
     def get_calculated_parameter(self, input_data_id, param_name):
-        """Получает конкретный параметр из calculatedParameters"""
+        """Получает значение параметра из calculatedParameters"""
         try:
             conn = self.get_connection()
-            query = "SELECT Val FROM calculatedParameters WHERE InputData_ID = ? AND calcParam = ?"
-            df = pd.read_sql(query, conn, params=[input_data_id, param_name])
-            return df.iloc[0]['Val'] if not df.empty else None
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                           SELECT Val
+                           FROM calculatedParameters
+                           WHERE InputData_ID = ?
+                             AND calcParam = ?
+                           """, (input_data_id, param_name))
+
+            result = cursor.fetchone()
+            return result[0] if result else None
+
         except Exception as e:
-            logging.error(f"Ошибка получения параметра {param_name}: {str(e)}")
+            print(f"Ошибка получения параметра {param_name}: {e}")
             return None
+
+    def update_calculate_table_improved(self, input_data_id):
+        """Улучшенная версия обновления calculate"""
+        try:
+            import math
+
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Получаем все необходимые параметры
+            params = {}
+            param_names = [
+                'P @ dt=0', 'Delta Q', 'h', 'k', 'вязкость', 'µгаза', 'Phi',
+                'Общая сжимаемость сt', 'Тип флюида'
+            ]
+
+            for param_name in param_names:
+                params[param_name] = self.get_calculated_parameter(input_data_id, param_name)
+
+            # Получаем данные из InputData
+            cursor.execute("""
+                           SELECT Obvodnennost, Vremya_issledovaniya
+                           FROM InputData
+                           WHERE ID = ?
+                           """, (input_data_id,))
+            input_data = cursor.fetchone()
+            obvodnennost, vremya_issledovaniya = input_data if input_data else (None, None)
+
+            # 1. P1_zab_vnk
+            p1_zab_vnk = params['P @ dt=0']
+
+            # 2. P2_zab_vnk - последнее значение из PressureVNK
+            cursor.execute("""
+                           SELECT TOP 1 PressureVnk
+                           FROM PressureVNK
+                           WHERE InputData_ID = ?
+                           ORDER BY ID DESC
+                           """, (input_data_id,))
+            p2_zab_vnk = cursor.fetchone()
+            p2_zab_vnk = p2_zab_vnk[0] if p2_zab_vnk else None
+
+            # 3. Pday - разница давлений за сутки
+            cursor.execute("""
+                           SELECT MAX(PressureVnk) - MIN(PressureVnk)
+                           FROM PressureVNK
+                           WHERE InputData_ID = ?
+                             AND Dat >= DATEADD('d', -1, (SELECT MAX(Dat) FROM PressureVNK WHERE InputData_ID = ?))
+                           """, (input_data_id, input_data_id))
+            pday = cursor.fetchone()
+            pday = pday[0] if pday else None
+
+            # 4. P_pl_vnk - значение из calculatedPressure
+            cursor.execute("""
+                           SELECT PplVnk
+                           FROM calculatedPressure
+                           WHERE InputData_ID = ?
+                           """, (input_data_id,))
+            p_pl_vnk = cursor.fetchone()
+            p_pl_vnk = p_pl_vnk[0] if p_pl_vnk else None
+
+            # 5. delta - разница с предыдущим исследованием (упрощенно)
+            delta = None  # Нужна дополнительная логика для предыдущих исследований
+
+            # 6. productivity - модуль отношения Delta Q к разнице давлений
+            cursor.execute("""
+                           SELECT Val
+                           FROM calculatedParameters
+                           WHERE InputData_ID = ?
+                             AND calcParam = 'Delta Q'
+                           """, (input_data_id,))
+            delta_q = cursor.fetchone()
+            delta_q = delta_q[0] if delta_q else None
+
+            productivity = abs(delta_q / (p1_zab_vnk - p_pl_vnk)) if delta_q and p1_zab_vnk and p_pl_vnk else None
+
+            # 7. Delta Q
+            delta_q_value = delta_q
+
+            # 8. Qoil = Delta Q*(1-Obvodnennost/100)*Vremya_issledovaniya/24
+            cursor.execute("""
+                           SELECT Obvodnennost, Vremya_issledovaniya
+                           FROM InputData
+                           WHERE ID = ?
+                           """, (input_data_id,))
+            input_data = cursor.fetchone()
+
+            qoil = None
+            if input_data and delta_q:
+                obvodnennost, vremya = input_data
+                qoil = delta_q * (1 - obvodnennost / 100) * vremya / 24
+
+            # 9. Kh/Mu
+            fluid_type = str(params['Тип флюида'] or '').lower()
+            kh_mu = None
+
+            if all(params.get(key) for key in ['h', 'k']):
+                if 'газ' in fluid_type and params['µгаза']:
+                    kh_mu = (params['h'] * 100 * params['k'] / 1000) / params['µгаза']
+                elif params['вязкость']:
+                    kh_mu = (params['h'] * 100 * params['k'] / 1000) / params['вязкость']
+
+            # 10. Rinv_Ppl1
+            rinv_ppl1 = None
+            if (vremya_issledovaniya and all(params.get(key) for key in ['k', 'Phi', 'Общая сжимаемость сt'])):
+                if 'газ' in fluid_type and params['µгаза']:
+                    rinv_ppl1 = 0.037 * math.sqrt(
+                        (params['k'] * vremya_issledovaniya) /
+                        (params['Phi'] * params['µгаза'] * params['Общая сжимаемость сt'])
+                    )
+                elif params['вязкость']:
+                    rinv_ppl1 = 0.037 * math.sqrt(
+                        (params['k'] * vremya_issledovaniya) /
+                        (params['Phi'] * params['вязкость'] * params['Общая сжимаемость сt'])
+                    )
+
+            # Вставляем данные
+            cursor.execute("""
+                           INSERT INTO calculate (P1_zab_vnk, P2_zab_vnk, Pday, P_pl_vnk, delta, productivity,
+                                                  Delta_Q, Qoil, Kh_Mu, Rinv_Ppl1, InputData_ID)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           """, (p1_zab_vnk, p2_zab_vnk, pday, p_pl_vnk, None, None,
+                                 params['Delta Q'], None, kh_mu, rinv_ppl1, input_data_id))
+
+            conn.commit()
+
+        except Exception as e:
+            print(f"Ошибка обновления calculate: {e}")
+            raise
 
     def check_column_types(self, table_name):
         """Проверяет точные типы данных столбцов в таблице"""
@@ -1131,6 +1261,195 @@ class AccessDatabase:
 
         except Exception as e:
             print(f"Ошибка добавления поля сортировки: {e}")
+
+    def update_calculate_table(self, input_data_id):
+        """Обновляет расчетную таблицу calculate"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # 1. P1_zab_vnk - значение из calculatedParameters где calcParam = "P @ dt=0"
+            cursor.execute("""
+                           SELECT Val
+                           FROM calculatedParameters
+                           WHERE InputData_ID = ?
+                             AND calcParam = 'P @ dt=0'
+                           """, (input_data_id,))
+            p1_zab_vnk = cursor.fetchone()
+            p1_zab_vnk = p1_zab_vnk[0] if p1_zab_vnk else None
+
+            # 2. P2_zab_vnk - последнее значение из PressureVNK
+            cursor.execute("""
+                           SELECT TOP 1 PressureVnk
+                           FROM PressureVNK
+                           WHERE InputData_ID = ?
+                           ORDER BY ID DESC
+                           """, (input_data_id,))
+            p2_zab_vnk = cursor.fetchone()
+            p2_zab_vnk = p2_zab_vnk[0] if p2_zab_vnk else None
+
+            # 3. Pday - разница давлений за сутки
+            cursor.execute("""
+                           SELECT MAX(PressureVnk) - MIN(PressureVnk)
+                           FROM PressureVNK
+                           WHERE InputData_ID = ?
+                             AND Dat >= DATEADD('d', -1, (SELECT MAX(Dat) FROM PressureVNK WHERE InputData_ID = ?))
+                           """, (input_data_id, input_data_id))
+            pday = cursor.fetchone()
+            pday = pday[0] if pday else None
+
+            # 4. P_pl_vnk - значение из calculatedPressure
+            cursor.execute("""
+                           SELECT PplVnk
+                           FROM calculatedPressure
+                           WHERE InputData_ID = ?
+                           """, (input_data_id,))
+            p_pl_vnk = cursor.fetchone()
+            p_pl_vnk = p_pl_vnk[0] if p_pl_vnk else None
+
+            # 5. delta - разница между текущим P_pl_vnk и предыдущим исследованием
+            delta = None
+            if p_pl_vnk:
+                # Ищем предыдущее исследование для этой же скважины
+                cursor.execute("""
+                               SELECT i.ID, p.PplVnk
+                               FROM InputData i
+                                        INNER JOIN prevData p ON i.ID = p.InputData_ID
+                               WHERE i.Skvazhina = (SELECT Skvazhina
+                                                    FROM InputData
+                                                    WHERE ID = ?)
+                                 AND i.ID != ?
+                               ORDER BY i.Data_issledovaniya DESC
+                               """, (input_data_id, input_data_id))
+
+                prev_research = cursor.fetchone()
+                if prev_research:
+                    prev_ppl_vnk = prev_research[1]
+                    delta = p_pl_vnk - prev_ppl_vnk
+                    print(f"Delta calculated: {p_pl_vnk} - {prev_ppl_vnk} = {delta}")
+
+            # 6. productivity - модуль отношения Delta Q к разнице давлений
+            cursor.execute("""
+                           SELECT Val
+                           FROM calculatedParameters
+                           WHERE InputData_ID = ?
+                             AND calcParam = 'Delta Q'
+                           """, (input_data_id,))
+            delta_q = cursor.fetchone()
+            delta_q = delta_q[0] if delta_q else None
+
+            productivity = abs(delta_q / (p1_zab_vnk - p_pl_vnk)) if delta_q and p1_zab_vnk and p_pl_vnk else None
+
+            # 7. Delta Q
+            delta_q_value = delta_q
+
+            # 8. Qoil = Delta Q*(1-Obvodnennost/100)*Vremya_issledovaniya/24
+            cursor.execute("""
+                           SELECT Obvodnennost, Vremya_issledovaniya
+                           FROM InputData
+                           WHERE ID = ?
+                           """, (input_data_id,))
+            input_data = cursor.fetchone()
+
+            qoil = None
+            if input_data and delta_q:
+                obvodnennost, vremya = input_data
+                qoil = delta_q * (1 - obvodnennost / 100) * vremya / 24
+
+            # 9. Kh/Mu - гидропроводность
+            cursor.execute("""
+                           SELECT Val
+                           FROM calculatedParameters
+                           WHERE InputData_ID = ?
+                             AND calcParam IN ('h', 'k', 'вязкость', 'µгаза')
+                           """, (input_data_id,))
+            params = cursor.fetchall()
+
+            # Получаем тип флюида
+            cursor.execute("""
+                           SELECT Val
+                           FROM calculatedParameters
+                           WHERE InputData_ID = ?
+                             AND calcParam = 'Тип флюида'
+                           """, (input_data_id,))
+            fluid_type = cursor.fetchone()
+            fluid_type = fluid_type[0].lower() if fluid_type else ''
+
+            kh_mu = None
+            if params and len(params) >= 3:
+                if 'газ' in fluid_type:
+                    # Для газа: Kh/Mu = (h*100 * k/1000) / µгаза
+                    kh_mu = (params[0][0] * 100 * params[1][0] / 1000) / params[3][0] if len(params) >= 4 else None
+                else:
+                    # Для жидкости: Kh/Mu = (h*100 * k/1000) / вязкость
+                    kh_mu = (params[0][0] * 100 * params[1][0] / 1000) / params[2][0]
+
+            # 10. Rinv_Ppl1
+            cursor.execute("""
+                           SELECT Val
+                           FROM calculatedParameters
+                           WHERE InputData_ID = ?
+                             AND calcParam IN ('k', 'Phi', 'Вязкость', 'µгаза', 'Общая сжимаемость сt')
+                           """, (input_data_id,))
+            rinv_params = cursor.fetchall()
+
+            rinv_ppl1 = None
+            if input_data and rinv_params and len(rinv_params) >= 4:
+                vremya = input_data[1]  # Vremya_issledovaniya
+                if 'газ' in fluid_type:
+                    # Для газа
+                    rinv_ppl1 = 0.037 * math.sqrt((rinv_params[0][0] * vremya) /
+                                                  (rinv_params[1][0] * rinv_params[3][0] * rinv_params[4][0]))
+                else:
+                    # Для жидкости
+                    rinv_ppl1 = 0.037 * math.sqrt((rinv_params[0][0] * vremya) /
+                                                  (rinv_params[1][0] * rinv_params[2][0] * rinv_params[4][0]))
+
+            # Вставляем или обновляем запись
+            cursor.execute("""
+                           INSERT INTO calculate (P1_zab_vnk, P2_zab_vnk, Pday, P_pl_vnk, delta, productivity,
+                                                  Delta_Q, Qoil, Kh_Mu, Rinv_Ppl1, InputData_ID)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           """, (p1_zab_vnk, p2_zab_vnk, pday, p_pl_vnk, delta, productivity,
+                                 delta_q_value, qoil, kh_mu, rinv_ppl1, input_data_id))
+
+            conn.commit()
+            print("Таблица calculate обновлена")
+
+        except Exception as e:
+            print(f"Ошибка обновления calculate: {e}")
+            raise
+
+    def insert_prev_data(self, data_dict):
+        """Вставляет данные в таблицу prevData"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            sql = """
+                  INSERT INTO prevData (PplVnk, PzabVnk, DataRes, Water, Q, Kprod, Smeh, Heff, Kgidr, InputData_ID)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                  """
+
+            cursor.execute(sql, (
+                data_dict.get('PplVnk'),
+                data_dict.get('PzabVnk'),
+                data_dict.get('DataRes'),
+                data_dict.get('Water'),
+                data_dict.get('Q'),
+                data_dict.get('Kprod'),
+                data_dict.get('Smeh'),
+                data_dict.get('Heff'),
+                data_dict.get('Kgidr'),
+                data_dict.get('InputData_ID')
+            ))
+
+            conn.commit()
+            logging.info(f"Данные предыдущего исследования сохранены для ID: {data_dict.get('InputData_ID')}")
+
+        except Exception as e:
+            logging.error(f"Ошибка вставки в prevData: {str(e)}")
+            raise
 
 # db = AccessDatabase()
 # db.add_sort_order_to_model_vnk()

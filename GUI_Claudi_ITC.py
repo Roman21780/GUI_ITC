@@ -686,418 +686,7 @@ def copy_excel_to_word_pandas(excel_path, word_path, sheet_name, search_text):
 
 
 # --------------------------------------------------------------------------------------------------------------
-def generate_report_logic(doc, output_file_path, selected_template):
-    import win32com.client
-    import os
-    import docx
-    from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-    import pandas as pd
-    from datetime import datetime
-    import logging
-    import pythoncom
 
-    logging.info(f"Начало формирования отчета. Выходной файл: {output_file_path}, Шаблон: {selected_template}")
-    try:
-        logging.info(f"Output file path: {output_file_path}")
-        logging.info(f"Selected template: {selected_template}")
-
-        try:
-            db = AccessDatabase()
-            last_record = db.get_last_record()
-
-            if last_record.empty:
-                raise ValueError("Нет данных для формирования отчета")
-
-            main_data_id = last_record.iloc[0]['ID']
-
-            # Получаем все данные из базы
-            parameters = db.get_parameters(main_data_id)
-            research_params = db.get_research_params(main_data_id)
-            amendments = db.get_amendments(main_data_id)
-
-            # Объединяем все данные в один словарь
-            data = {}
-            # Добавляем основные данные
-            for column in last_record.columns:
-                value = last_record.iloc[0][column]
-                if pd.notna(value):
-                    data[column.lower()] = value
-
-            # Добавляем параметры, исследовательские параметры и поправки
-            data.update(parameters)
-            data.update(research_params)
-            data.update(amendments)
-
-            # Выбор шаблона Word
-            template_map = {
-                "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
-                "КВД_Оренбург": templates_path("KVD_Orenburg.docx"),
-                "КВД_Оренбург_газ": templates_path("KVD_Orenburg_gas.docx"),
-                "КВД_Оренбург2": templates_path("KVD_Orenburg2.docx"),
-                "КВД_Хантос": templates_path("KVD_Khantos.docx"),
-                "КВД_глушение": templates_path("KVD_For_Killing.docx"),
-                "КВД_ННГ": templates_path("KVD_NNG.docx"),
-                "КВД+ИД": templates_path("KVD_ID.docx"),
-                "КСД": templates_path("KSD.docx"),
-                "КПД": templates_path("KPD.docx"),
-                "КПД+ИД": templates_path("KPD_ID.docx"),
-                "ГРП": templates_path("GRP.docx")
-            }
-
-            # Преобразуем ключи в нижний регистр для сравнения
-            template_map_lower = {k.lower(): v for k, v in template_map.items()}
-
-            if selected_template.lower() in template_map_lower:
-                selected_template_file = template_map_lower[selected_template.lower()]
-            else:
-                raise ValueError(f"Неверное имя шаблона: {selected_template}. "
-                                 f"Доступные шаблоны: {list(template_map.keys())}")
-
-            # Добавление данных из предыдущего исследования --------------------------------------
-            try:
-                field_name = data.get('field', '').replace(" ", "_").capitalize()
-                previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
-                previous_data_path = table_prev_path(previous_data_file)
-
-                if os.path.exists(previous_data_path):
-                    try:
-                        final_table_df = pd.read_excel(previous_data_path, skiprows=11)
-                        well_num = data.get('well', '').split()[0] if data.get('well') else ''
-                        logging.info(f"Скважина: {well_num}")
-
-                        # Фильтруем данные по номеру скважины
-                        final_table_df['Скважина'] = final_table_df['Скважина'].astype(str).str.strip()
-                        final_table_df = final_table_df.dropna(subset=['Скважина'])
-                        filtered_data = final_table_df[final_table_df['Скважина'] == well_num]
-
-                        if filtered_data.empty:
-                            logging.warning(f"Данные для скважины '{well_num}' не найдены в файле Excel.")
-                        else:
-                            # Обработка данных из файла
-                            pd.set_option('mode.use_inf_as_na', True)
-                            filtered_data.loc[:, 'Дата испытания'] = filtered_data['Дата испытания'].apply(
-                                lambda x: datetime.strptime(x, "%d.%m.%Y") if isinstance(x, str) else x
-                            )
-
-                            latest_entry = filtered_data.loc[filtered_data['Дата испытания'].idxmax()]
-
-                            # Нормализуем строки в DataFrame
-                            final_table_df = final_table_df.map(
-                                lambda x: normalize_string(x) if isinstance(x, str) else x)
-                            # Нормализация названий столбцов в DataFrame
-                            final_table_df.columns = [normalize_string(col) for col in final_table_df.columns]
-
-                            result_dict = {
-                                normalize_string('Рпл  на ВНК, кгс/см2'): latest_entry['Рпл  на ВНК, кгс/см2'],
-                                normalize_string('Рзаб  на ВНК, кгс/см2'): latest_entry['Рзаб  на ВНК, кгс/см2'],
-                                normalize_string('Дата испытания'): latest_entry['Дата испытания'].strftime("%d.%m.%Y"),
-                                normalize_string('% воды'): str(latest_entry['% воды']),
-                                normalize_string('Qж/Qг, м3/сут   '): str(latest_entry['Qж/Qг, м3/сут   ']),
-                                normalize_string('Кпрод. м3/сут*кгс/см2'): str(latest_entry['Кпрод. м3/сут*кгс/см2']),
-                                normalize_string('Скин-фактор механич./интегр.'): str(
-                                    latest_entry['Скин-фактор механич./интегр.']),
-                                normalize_string('Нэф., м.'): str(latest_entry['Нэф., м. ']),
-                                normalize_string('Кгидр., Д*см/сПз'): str(latest_entry['Кгидр., Д*см/сПз'])
-                            }
-
-                            replace_tags_only(doc, result_dict)
-                            logging.info("Данные из файла предыдущих исследований успешно загружены.")
-
-                    except Exception as e:
-                        logging.error(f"Ошибка при чтении файла предыдущих данных Excel: {str(e)}")
-
-                else:
-                    logging.warning(f"Файл предыдущих данных не найден: {previous_data_path}")
-                    logging.info("Для данного отчета не требуется файл с предыдущими данными.")
-
-            except Exception as e:
-                logging.error(f"Ошибка при работе с историческими данями: {e}", exc_info=True)
-
-            # Расчет плотности
-            KVD_density = data.get('dens2', 0)
-            work_density = data.get('dens1', 0)
-            if not work_density:
-                density = f'{KVD_density} г/см3'
-            else:
-                density = f'{KVD_density} г/см3 для пересчета участка КВД и {work_density} г/см3 - для пересчета цикла отработки скважины'
-
-            # Добавляем density в данные
-            data['density'] = density
-
-            # Расчет Leff1 в зависимости от модели
-            model_value = data.get('model', '')
-            if model_value == "Горизонтальная с ГРП":
-                Leff1 = round(data.get('Leff1', 0))
-            else:
-                Leff1 = round(data.get('Leff1', 0))
-
-            # Добавляем Leff1 в данные
-            data['Leff1'] = Leff1
-
-            model_params = {
-                "Вертикальная": {
-                    "additional_params": [],
-                    "diagnostic_text": "model_descriptions.Вертикальная"
-                },
-                "Наклонн.": {
-                    "additional_params": [],
-                    "diagnostic_text": "model_descriptions.Наклонн."
-                },
-                "Вертикальная - частичное вскрытие": {
-                    "additional_params": [
-                        {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
-                        {"name": "Скин-фактор геометрический", "value": data.get("S_geom1"), "key": "S_geom1"},
-                        {"name": "Эффективная часть интервала перфорации (hw), (м)", "value": data.get("Leff1"),
-                         "key": "Leff1"}
-                    ],
-                    "diagnostic_text": "model_descriptions.Вертикальная - частичное вскрытие"
-                },
-                "Горизонтальн.": {
-                    "additional_params": [
-                        {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
-                        {"name": "Эффективная длина скважины, (м)", "value": data.get("Leff1"), "key": "Leff1"}
-                    ],
-                    "diagnostic_text": "model_descriptions.Горизонтальн."
-                },
-                "Горизонтальная с ГРП": {
-                    "additional_params": [
-                        {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
-                        {"name": "Количество трещин", "value": data.get("num_frac1"), "key": "num_frac1"},
-                        {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
-                    ],
-                    "diagnostic_text": "model_descriptions.Горизонтальная с ГРП"
-                },
-                "Трещина - бесконечная проводимость": {
-                    "additional_params": [
-                        {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
-                        {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
-                    ],
-                    "diagnostic_text": "model_descriptions.Трещина - бесконечная проводимость"
-                },
-                "Трещина - конечная проводимость": {
-                    "additional_params": [
-                        {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
-                        {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"},
-                        {"name": "Проводимость трещины, (Fc)", "value": data.get("Fc1"), "key": "Fc1"}
-                    ],
-                    "diagnostic_text": "model_descriptions.Трещина - конечная проводимость"
-                },
-                "Трещина - равномерный поток": {
-                    "additional_params": [
-                        {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
-                        {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
-                    ],
-                    "diagnostic_text": "model_descriptions.Трещина - равномерный поток"
-                }
-            }
-
-            # Вставка параметров модели в таблицу результатов
-            def insert_model_params_to_table(doc, model_name, data):
-                """Вставляет параметры модели после строки 'Проницаемость, (мД)'"""
-                table = find_results_table(doc)
-                if not table:
-                    logging.error("Таблица результатов не найдена")
-                    return False
-
-                params = model_params.get(model_name, {}).get("additional_params", [])
-                if not params:
-                    logging.warning(f"Нет дополнительных параметров для модели {model_name}")
-                    return False
-
-                # Находим индекс строки с "Проницаемость, (мД)"
-                target_row_idx = -1
-                for i, row in enumerate(table.rows):
-                    if row.cells and "Проницаемость, (мД)" in row.cells[0].text:
-                        target_row_idx = i
-                        break
-
-                if target_row_idx == -1:
-                    logging.error("Строка 'Проницаемость, (мД)' не найдена в таблице")
-                    return False
-
-                # Вставляем параметры после найденной строки
-                for param in params:
-                    new_row = table.add_row()
-                    table.rows._tbl.insert(target_row_idx + 1, new_row._tr)
-                    target_row_idx += 1
-
-                    # Форматируем и вставляем данные
-                    name = format_units(param["name"])
-                    value = format_units(str(param["value"]))
-
-                    new_row.cells[0].text = name
-                    new_row.cells[1].text = value
-
-                    # Устанавливаем выравнивание
-                    for paragraph in new_row.cells[0].paragraphs:
-                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-                        set_font_size(paragraph, 12)
-
-                    for paragraph in new_row.cells[1].paragraphs:
-                        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-                        set_font_size(paragraph, 12)
-
-                logging.info(f"Успешно вставлено {len(params)} параметров модели")
-                return True
-
-            # Основной блок обработки документа
-            model_value = data.get('model', '')
-            model_name = None
-
-            # Находим соответствующую модель
-            for key in model_params.keys():
-                if model_value and key.strip().lower() in model_value.strip().lower():
-                    model_name = key
-                    break
-
-            if model_name is None:
-                model_name = "Вертикальная"
-                logging.warning(
-                    f"Предупреждение: Модель '{model_value}' не найдена в model_params. Используется модель по умолчанию: {model_name}")
-
-            # Добавляем параметры модели в словарь data
-            model_data = model_params.get(model_name, {})
-            model_description = TEXT_TEMPLATES["model_descriptions"].get(model_name, "")
-
-            if not model_description:
-                logging.warning(f"Описание для модели '{model_name}' не найдено в шаблонах")
-
-            data.update({
-                "model_description": model_description,
-                "model_name": model_name,
-                "diagnostic_text": model_description,
-                **{f"param_{k}": v for k, v in enumerate(model_data.get("additional_params", []))},
-            })
-
-            replace_tags_only(doc, data)
-            logging.info("Метки в отчете успешно заменены на значения.")
-
-            # Специальная обработка diagnostic_text
-            for paragraph in doc.paragraphs:
-                if "{{diagnostic_text}}" in paragraph.text:
-                    if paragraph.runs:
-                        original_font = paragraph.runs[0].font
-
-                    paragraph.text = paragraph.text.replace("{{diagnostic_text}}", data["model_description"])
-
-                    if paragraph.runs and original_font:
-                        paragraph.runs[0].font.name = original_font.name
-                        paragraph.runs[0].font.size = original_font.size
-                        paragraph.runs[0].font.bold = original_font.bold
-                        paragraph.runs[0].font.italic = original_font.italic
-                        paragraph.runs[0].font.underline = original_font.underline
-                        if original_font.color.rgb:
-                            paragraph.runs[0].font.color.rgb = original_font.color.rgb
-
-            # Вставка параметров модели в таблицу
-            if not insert_model_params_to_table(doc, model_name, data):
-                logging.warning("Не удалось вставить параметры модели в таблицу")
-
-            # Проверка и сохранение
-            if "{{diagnostic_text}}" in [p.text for p in doc.paragraphs]:
-                logging.error("Метка diagnostic_text не была заменена!")
-            else:
-                logging.info("метка diagnostic_text успешно заменена")
-
-            # Удаление лишних строк из таблицы результатов
-            replace_and_format_table(doc, data)
-
-            doc.save(output_file_path)
-            logging.info(f"Data dictionary content: {json.dumps(data, indent=2, ensure_ascii=False)}")
-
-            # Внесение данных в Helper----------------------------------------------------------
-            try:
-                logger.info("Начало обновления Helper.xlsm")
-
-                if data.get("type_of_research") in ["КВД", "КВУ", "КСД", "ИК+КВУ", "ИК+КВД", "ГРП", "ГДП", "ИД+КВД"]:
-                    category = "доб"
-                else:
-                    category = "нагн"
-
-                new_row = {
-                    "Дата интерпретации": data.get("date_of_analiz"),
-                    "Дата начала исследования": data.get("date_research"),
-                    "Дата конца исследования": data.get("date_researcf"),
-                    "ДО": data.get("company"),
-                    "Месторождение": data.get("field"),
-                    "Пласт": data.get("formation"),
-                    "Куст": data.get("well", "").split()[2] if len(data.get("well", "").split()) > 2 else data.get(
-                        "well", ""),
-                    "№скв.": data.get("well", "").split()[0] if data.get("well") else data.get("well", ""),
-                    "Категория скважин": category,
-                    "Вид исследования": data.get("type_of_research"),
-                    "Исполнитель (организация)": "ИТС",
-                    "Интерпретатор": data.get("interpreter"),
-                    "Наличие в базе": "база",
-                    "Оборудование": data.get("device", "").split()[1] if len(
-                        data.get("device", "").split()) > 1 else data.get("device", ""),
-                    "Назначение": "Запрос ДО",
-                    "Класс исследования": data.get("klass"),
-                    "Успешность": data.get("success"),
-                    "Длительность факт": data.get("duration"),
-                    "Qн": data.get("Qoil")
-                }
-
-                # Открытие файла Excel
-                logging.info("Обновление Helper.xlsm")
-                excel_helper = win32com.client.DispatchEx("Excel.Application")
-                excel_helper.Visible = False
-                excel_helper.DisplayAlerts = False
-
-                excel_file_path_helper = resource_path("Helper.xlsm")
-                if not os.path.exists(excel_file_path_helper):
-                    logger.warning(f"Файл Helper.xlsm не найден: {excel_file_path_helper}")
-                    return False
-
-                # Открываем Helper.xlsm
-                workbook = excel_helper.Workbooks.Open(excel_file_path_helper)
-                sheet1 = workbook.Sheets['Sheet1']
-
-                # Находим первую полностью пустую строку
-                empty_row_index = sheet1.Cells(sheet1.Rows.Count, 4).End(-4162).Row + 1
-
-                # Добавляем значения из словаря в соответствующие столбцы
-                for key, value in new_row.items():
-                    column_index = None
-                    for col in sheet1.Range(sheet1.Cells(1, 1), sheet1.Cells(1, sheet1.Columns.Count)).Columns:
-                        if col.Cells(1, 1).Value == key:
-                            column_index = col.Cells(1, 1).Column
-                            break
-
-                    if column_index is not None:
-                        sheet1.Cells(empty_row_index, column_index).Value = value
-
-                # Сохраняем книгу
-                workbook.Save()
-                logger.info("Данные успешно записаны в Helper.xlsm")
-
-            except Exception as e:
-                logger.error(f"Ошибка при работе с Helper.xlsm: {str(e)}")
-            finally:
-                if 'workbook' in locals() and workbook is not None:
-                    try:
-                        workbook.Close(SaveChanges=True)
-                    except Exception as e:
-                        logging.warning(f"Ошибка при закрытии Workbook: {str(e)}")
-                if excel_helper:
-                    excel_helper.Quit()
-
-            logger.info("Отчет успешно сформирован!")
-            return True
-
-        except Exception as e:
-            logging.error(f"Ошибка при формировании отчета: {str(e)}", exc_info=True)
-            raise RuntimeError(f"Ошибка при формировании отчета: {str(e)}")
-
-        finally:
-            if db:
-                db.close()
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        logging.error(f"Ошибка при формировании отчета: {str(e)}", exc_info=True)
-        return False
 
 
 # PDFReader-----------------------------------------------------------------------------------
@@ -1806,7 +1395,6 @@ class ReportGUI:
             logging.error(f"Ошибка вставки параметров: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка: {str(e)}")
 
-
     def paste_model_ksd(self):
         """Вставляет данные ModelKSD из буфера обмена"""
         try:
@@ -1815,7 +1403,10 @@ class ReportGUI:
                 messagebox.showerror("Ошибка", "Буфер обмена пуст!")
                 return
 
+            print(f"Данные из буфера: {clipboard_data[:200]}...")  # Первые 200 символов
+
             rows = [r.split('\t') for r in clipboard_data.split('\n') if r.strip()]
+            print(f"Разобрано строк: {len(rows)}")
 
             main_data_id = self.ensure_main_data_exists()
             if main_data_id is None:
@@ -1823,15 +1414,32 @@ class ReportGUI:
                 return
 
             data = []
-            for row in rows:
+            for i, row in enumerate(rows):
+                if i < 5:  # Покажем первые 5 строк
+                    print(f"Строка {i}: {row}")
+
                 if len(row) >= 3:  # 3 столбца: empty, Dat, PressureVnkModel
+                    # Пропускаем заголовки
+                    if any(header in row[0] for header in ['empty', 'Empty', 'Пустой']):
+                        continue
+                    if any(header in row[1] for header in ['Dat', 'Date', 'Дата']):
+                        continue
+                    if any(header in row[2] for header in ['Pressure', 'Model', 'Давление']):
+                        continue
+
                     data.append({
                         'empty': row[0].strip(),
                         'Dat': ReportGUI.convert_value(row[1].strip()),
                         'PressureVnkModel': ReportGUI.convert_value(row[2].strip())
                     })
 
+            print(f"Обработано записей: {len(data)}")
             if data:
+                if len(data) > 5:
+                    print(f"Первые 5 записей: {data[:5]}")
+                else:
+                    print(f"Все записи: {data}")
+
                 self.db.insert_model_ksd(main_data_id, data)
                 messagebox.showinfo("Успех", "Данные ModelKSD сохранены!")
             else:
@@ -2094,21 +1702,25 @@ class ReportGUI:
         return self.current_main_data_id
 
     def process_model_data(self, rows, section):
-        """Обрабатывает данные модели для ModelVNK"""
+        """Обрабатывает данные модели и выбирает целевую таблицу"""
         data_list = []
         for row in rows:
-            if len(row) >= 4:
+            if len(row) >= 3:  # Нужно минимум 3 столбца: empty, Dat, PressureVnkModel
                 # Пропускаем заголовки
-                if row[1].strip() == "DT" or row[2].strip() == "DP" or row[3].strip() == "DP'":
+                if (any(header in row[0] for header in ['empty', 'Empty', 'Пустой']) or
+                        any(header in row[1] for header in ['DT', 'Dat', 'Date', 'Дата', 'Прошедшее время', '(ч)']) or
+                        any(header in row[2] for header in
+                            ['DP', 'deltaP', 'Pressure', 'Model', 'Давление', 'PressureVnkModel', '(кг/см^2 )'])):
                     continue
-                if row[1].strip() == "(ч)" or row[2].strip() == "(кг/см^2 )":
+
+                # Пропускаем пустые строки
+                if not row[0].strip() and not row[1].strip() and not row[2].strip():
                     continue
 
                 data_list.append({
                     'empty': row[0].strip(),
-                    'DT': row[1].strip(),
-                    'deltaP': row[2].strip(),
-                    'DP': row[3].strip()
+                    'Dat': row[1].strip(),
+                    'PressureVnkModel': row[2].strip()
                 })
 
         main_data_id = self.ensure_main_data_exists()
@@ -2117,10 +1729,25 @@ class ReportGUI:
             return
 
         try:
-            # Вставляем данные
-            self.db.insert_model_vnk(main_data_id, data_list)
+            # Получаем тип исследования
+            research_type = self.db.get_research_type(main_data_id)
+            print(f"Тип исследования: {research_type}")
 
-            messagebox.showinfo("Успех", "Данные модели сохранены в правильном порядке!")
+            if not data_list:
+                messagebox.showinfo("Информация", "Нет данных для сохранения после фильтрации заголовков")
+                return
+
+            # Определяем целевую таблицу на основе типа исследования
+            if research_type and "КСД" in research_type.upper():
+                # Для КСД исследований - вставляем в ModelKSD
+                print(f"Вставляем {len(data_list)} записей в ModelKSD")
+                self.db.insert_model_ksd(main_data_id, data_list)
+                messagebox.showinfo("Успех", "Данные модели сохранены в ModelKSD!")
+            else:
+                # Для всех остальных исследований - вставляем в ModelVNK
+                print(f"Вставляем {len(data_list)} записей в ModelVNK")
+                self.db.insert_model_vnk(main_data_id, data_list)
+                messagebox.showinfo("Успех", "Данные модели сохранены в ModelVNK!")
 
         except Exception as e:
             logging.error(f"Ошибка при сохранении параметров модели: {str(e)}")
@@ -2368,6 +1995,438 @@ class ReportGUI:
         except Exception as e:
             logging.warning(f"Ошибка при завершении процесса Excel: {str(e)}")
 
+    def generate_report_logic(self, doc, output_file_path, selected_template):
+        import win32com.client
+        import os
+        import docx
+        from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
+        import pandas as pd
+        from datetime import datetime
+        import logging
+        import pythoncom
+
+        logging.info(f"Начало формирования отчета. Выходной файл: {output_file_path}, Шаблон: {selected_template}")
+        try:
+            logging.info(f"Output file path: {output_file_path}")
+            logging.info(f"Selected template: {selected_template}")
+
+            try:
+                db = AccessDatabase()
+                last_record = db.get_last_record()
+
+                if last_record.empty:
+                    raise ValueError("Нет данных для формирования отчета")
+
+                main_data_id = last_record.iloc[0]['ID']
+
+                # Получаем все данные из базы
+                parameters = db.get_parameters(main_data_id)
+                research_params = db.get_research_params(main_data_id)
+                amendments = db.get_amendments(main_data_id)
+
+                # Объединяем все данные в один словарь
+                data = {}
+                # Добавляем основные данные
+                for column in last_record.columns:
+                    value = last_record.iloc[0][column]
+                    if pd.notna(value):
+                        data[column.lower()] = value
+
+                # Добавляем параметры, исследовательские параметры и поправки
+                data.update(parameters)
+                data.update(research_params)
+                data.update(amendments)
+
+                # Выбор шаблона Word
+                template_map = {
+                    "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
+                    "КВД_Оренбург": templates_path("KVD_Orenburg.docx"),
+                    "КВД_Оренбург_газ": templates_path("KVD_Orenburg_gas.docx"),
+                    "КВД_Оренбург2": templates_path("KVD_Orenburg2.docx"),
+                    "КВД_Хантос": templates_path("KVD_Khantos.docx"),
+                    "КВД_глушение": templates_path("KVD_For_Killing.docx"),
+                    "КВД_ННГ": templates_path("KVD_NNG.docx"),
+                    "КВД+ИД": templates_path("KVD_ID.docx"),
+                    "КСД": templates_path("KSD.docx"),
+                    "КПД": templates_path("KPD.docx"),
+                    "КПД+ИД": templates_path("KPD_ID.docx"),
+                    "ГРП": templates_path("GRP.docx")
+                }
+
+                # Преобразуем ключи в нижний регистр для сравнения
+                template_map_lower = {k.lower(): v for k, v in template_map.items()}
+
+                if selected_template.lower() in template_map_lower:
+                    selected_template_file = template_map_lower[selected_template.lower()]
+                else:
+                    raise ValueError(f"Неверное имя шаблона: {selected_template}. "
+                                     f"Доступные шаблоны: {list(template_map.keys())}")
+
+                # Добавление данных из предыдущего исследования --------------------------------------
+                try:
+                    field_name = data.get('field', '').replace(" ", "_").capitalize()
+                    previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
+                    previous_data_path = table_prev_path(previous_data_file)
+
+                    if os.path.exists(previous_data_path):
+                        try:
+                            final_table_df = pd.read_excel(previous_data_path, skiprows=11)
+                            well_num = data.get('well', '').split()[0] if data.get('well') else ''
+                            logging.info(f"Скважина: {well_num}")
+
+                            # Фильтруем данные по номеру скважины
+                            final_table_df['Скважина'] = final_table_df['Скважина'].astype(str).str.strip()
+                            final_table_df = final_table_df.dropna(subset=['Скважина'])
+                            filtered_data = final_table_df[final_table_df['Скважина'] == well_num]
+
+                            if not filtered_data.empty:
+                                # Обработка данных из файла
+                                pd.set_option('mode.use_inf_as_na', True)
+                                filtered_data.loc[:, 'Дата испытания'] = filtered_data['Дата испытания'].apply(
+                                    lambda x: datetime.strptime(x, "%d.%m.%Y") if isinstance(x, str) else x
+                                )
+
+                                latest_entry = filtered_data.loc[filtered_data['Дата испытания'].idxmax()]
+
+                                # СОХРАНЯЕМ ДАННЫЕ В ТАБЛИЦУ prevData
+                                prev_data = {
+                                    'PplVnk': latest_entry.get('Рпл  на ВНК, кгс/см2'),
+                                    'PzabVnk': latest_entry.get('Рзаб  на ВНК, кгс/см2'),
+                                    'DataRes': latest_entry.get('Дата испытания'),
+                                    'Water': latest_entry.get('% воды'),
+                                    'Q': latest_entry.get('Qж/Qг, м3/сут'),
+                                    'Kprod': latest_entry.get('Кпрод. м3/сут*кгс/см2'),
+                                    'Smeh': latest_entry.get('Скин-фактор механич./интегр.'),
+                                    'Heff': latest_entry.get('Нэф., м.'),
+                                    'Kgidr': latest_entry.get('Кгидр., Д*см/сПз'),
+                                    'InputData_ID': main_data_id  # Связь с текущим исследованием
+                                }
+
+                                # Сохраняем в базу данных
+                                self.db.insert_prev_data(prev_data)
+                                logging.info("Данные предыдущего исследования сохранены в базу")
+
+                                # Нормализуем строки для отчета
+                                final_table_df = final_table_df.map(
+                                    lambda x: normalize_string(x) if isinstance(x, str) else x)
+                                final_table_df.columns = [normalize_string(col) for col in final_table_df.columns]
+
+                                result_dict = {
+                                    normalize_string('Рпл  на ВНК, кгс/см2'): latest_entry['Рпл  на ВНК, кгс/см2'],
+                                    normalize_string('Рзаб  на ВНК, кгс/см2'): latest_entry['Рзаб  на ВНК, кгс/см2'],
+                                    normalize_string('Дата испытания'): latest_entry['Дата испытания'].strftime(
+                                        "%d.%m.%Y"),
+                                    normalize_string('% воды'): str(latest_entry['% воды']),
+                                    normalize_string('Qж/Qг, м3/сут   '): str(latest_entry['Qж/Qг, м3/сут   ']),
+                                    normalize_string('Кпрод. м3/сут*кгс/см2'): str(
+                                        latest_entry['Кпрод. м3/сут*кгс/см2']),
+                                    normalize_string('Скин-фактор механич./интегр.'): str(
+                                        latest_entry['Скин-фактор механич./интегр.']),
+                                    normalize_string('Нэф., м.'): str(latest_entry['Нэф., м. ']),
+                                    normalize_string('Кгидр., Д*см/сПз'): str(latest_entry['Кгидр., Д*см/сПз'])
+                                }
+
+                                replace_tags_only(doc, result_dict)
+                                logging.info("Данные из файла предыдущих исследований успешно загружены.")
+
+                        except Exception as e:
+                            logging.error(f"Ошибка при чтении файла предыдущих данных Excel: {str(e)}")
+
+                    else:
+                        logging.warning(f"Файл предыдущих данных не найден: {previous_data_path}")
+                        logging.info("Для данного отчета не требуется файл с предыдущими данными.")
+
+                except Exception as e:
+                    logging.error(f"Ошибка при работе с историческими данными: {e}", exc_info=True)
+
+                # Расчет плотности
+                KVD_density = data.get('dens2', 0)
+                work_density = data.get('dens1', 0)
+                if not work_density:
+                    density = f'{KVD_density} г/см3'
+                else:
+                    density = f'{KVD_density} г/см3 для пересчета участка КВД и {work_density} г/см3 - для пересчета цикла отработки скважины'
+
+                # Добавляем density в данные
+                data['density'] = density
+
+                # Расчет Leff1 в зависимости от модели
+                model_value = data.get('model', '')
+                if model_value == "Горизонтальная с ГРП":
+                    Leff1 = round(data.get('Leff1', 0))
+                else:
+                    Leff1 = round(data.get('Leff1', 0))
+
+                # Добавляем Leff1 в данные
+                data['Leff1'] = Leff1
+
+                model_params = {
+                    "Вертикальная": {
+                        "additional_params": [],
+                        "diagnostic_text": "model_descriptions.Вертикальная"
+                    },
+                    "Наклонн.": {
+                        "additional_params": [],
+                        "diagnostic_text": "model_descriptions.Наклонн."
+                    },
+                    "Вертикальная - частичное вскрытие": {
+                        "additional_params": [
+                            {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
+                            {"name": "Скин-фактор геометрический", "value": data.get("S_geom1"), "key": "S_geom1"},
+                            {"name": "Эффективная часть интервала перфорации (hw), (м)", "value": data.get("Leff1"),
+                             "key": "Leff1"}
+                        ],
+                        "diagnostic_text": "model_descriptions.Вертикальная - частичное вскрытие"
+                    },
+                    "Горизонтальн.": {
+                        "additional_params": [
+                            {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
+                            {"name": "Эффективная длина скважины, (м)", "value": data.get("Leff1"), "key": "Leff1"}
+                        ],
+                        "diagnostic_text": "model_descriptions.Горизонтальн."
+                    },
+                    "Горизонтальная с ГРП": {
+                        "additional_params": [
+                            {"name": "Скин-фактор механический", "value": data.get("S_meh1"), "key": "S_meh1"},
+                            {"name": "Количество трещин", "value": data.get("num_frac1"), "key": "num_frac1"},
+                            {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
+                        ],
+                        "diagnostic_text": "model_descriptions.Горизонтальная с ГРП"
+                    },
+                    "Трещина - бесконечная проводимость": {
+                        "additional_params": [
+                            {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
+                            {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
+                        ],
+                        "diagnostic_text": "model_descriptions.Трещина - бесконечная проводимость"
+                    },
+                    "Трещина - конечная проводимость": {
+                        "additional_params": [
+                            {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
+                            {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"},
+                            {"name": "Проводимость трещины, (Fc)", "value": data.get("Fc1"), "key": "Fc1"}
+                        ],
+                        "diagnostic_text": "model_descriptions.Трещина - конечная проводимость"
+                    },
+                    "Трещина - равномерный поток": {
+                        "additional_params": [
+                            {"name": "Скин кольматации стенок трещины", "value": data.get("S_meh1"), "key": "S_meh1"},
+                            {"name": "Полудлина трещины, (м)", "value": data.get("Xf1"), "key": "Xf1"}
+                        ],
+                        "diagnostic_text": "model_descriptions.Трещина - равномерный поток"
+                    }
+                }
+
+                # Вставка параметров модели в таблицу результатов
+                def insert_model_params_to_table(doc, model_name, data):
+                    """Вставляет параметры модели после строки 'Проницаемость, (мД)'"""
+                    table = find_results_table(doc)
+                    if not table:
+                        logging.error("Таблица результатов не найдена")
+                        return False
+
+                    params = model_params.get(model_name, {}).get("additional_params", [])
+                    if not params:
+                        logging.warning(f"Нет дополнительных параметров для модели {model_name}")
+                        return False
+
+                    # Находим индекс строки с "Проницаемость, (мД)"
+                    target_row_idx = -1
+                    for i, row in enumerate(table.rows):
+                        if row.cells and "Проницаемость, (мД)" in row.cells[0].text:
+                            target_row_idx = i
+                            break
+
+                    if target_row_idx == -1:
+                        logging.error("Строка 'Проницаемость, (мД)' не найдена в таблице")
+                        return False
+
+                    # Вставляем параметры после найденной строки
+                    for param in params:
+                        new_row = table.add_row()
+                        table.rows._tbl.insert(target_row_idx + 1, new_row._tr)
+                        target_row_idx += 1
+
+                        # Форматируем и вставляем данные
+                        name = format_units(param["name"])
+                        value = format_units(str(param["value"]))
+
+                        new_row.cells[0].text = name
+                        new_row.cells[1].text = value
+
+                        # Устанавливаем выравнивание
+                        for paragraph in new_row.cells[0].paragraphs:
+                            paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+                            set_font_size(paragraph, 12)
+
+                        for paragraph in new_row.cells[1].paragraphs:
+                            paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                            set_font_size(paragraph, 12)
+
+                    logging.info(f"Успешно вставлено {len(params)} параметров модели")
+                    return True
+
+                # Основной блок обработки документа
+                model_value = data.get('model', '')
+                model_name = None
+
+                # Находим соответствующую модель
+                for key in model_params.keys():
+                    if model_value and key.strip().lower() in model_value.strip().lower():
+                        model_name = key
+                        break
+
+                if model_name is None:
+                    model_name = "Вертикальная"
+                    logging.warning(
+                        f"Предупреждение: Модель '{model_value}' не найдена в model_params. Используется модель по умолчанию: {model_name}")
+
+                # Добавляем параметры модели в словарь data
+                model_data = model_params.get(model_name, {})
+                model_description = TEXT_TEMPLATES["model_descriptions"].get(model_name, "")
+
+                if not model_description:
+                    logging.warning(f"Описание для модели '{model_name}' не найдено в шаблонах")
+
+                data.update({
+                    "model_description": model_description,
+                    "model_name": model_name,
+                    "diagnostic_text": model_description,
+                    **{f"param_{k}": v for k, v in enumerate(model_data.get("additional_params", []))},
+                })
+
+                replace_tags_only(doc, data)
+                logging.info("Метки в отчете успешно заменены на значения.")
+
+                # Специальная обработка diagnostic_text
+                for paragraph in doc.paragraphs:
+                    if "{{diagnostic_text}}" in paragraph.text:
+                        if paragraph.runs:
+                            original_font = paragraph.runs[0].font
+
+                        paragraph.text = paragraph.text.replace("{{diagnostic_text}}", data["model_description"])
+
+                        if paragraph.runs and original_font:
+                            paragraph.runs[0].font.name = original_font.name
+                            paragraph.runs[0].font.size = original_font.size
+                            paragraph.runs[0].font.bold = original_font.bold
+                            paragraph.runs[0].font.italic = original_font.italic
+                            paragraph.runs[0].font.underline = original_font.underline
+                            if original_font.color.rgb:
+                                paragraph.runs[0].font.color.rgb = original_font.color.rgb
+
+                # Вставка параметров модели в таблицу
+                if not insert_model_params_to_table(doc, model_name, data):
+                    logging.warning("Не удалось вставить параметры модели в таблицу")
+
+                # Проверка и сохранение
+                if "{{diagnostic_text}}" in [p.text for p in doc.paragraphs]:
+                    logging.error("Метка diagnostic_text не была заменена!")
+                else:
+                    logging.info("метка diagnostic_text успешно заменена")
+
+                # Удаление лишних строк из таблицы результатов
+                replace_and_format_table(doc, data)
+
+                doc.save(output_file_path)
+                logging.info(f"Data dictionary content: {json.dumps(data, indent=2, ensure_ascii=False)}")
+
+                # Внесение данных в Helper----------------------------------------------------------
+                try:
+                    logger.info("Начало обновления Helper.xlsm")
+
+                    if data.get("type_of_research") in ["КВД", "КВУ", "КСД", "ИК+КВУ", "ИК+КВД", "ГРП", "ГДП",
+                                                        "ИД+КВД"]:
+                        category = "доб"
+                    else:
+                        category = "нагн"
+
+                    new_row = {
+                        "Дата интерпретации": data.get("date_of_analiz"),
+                        "Дата начала исследования": data.get("date_research"),
+                        "Дата конца исследования": data.get("date_researcf"),
+                        "ДО": data.get("company"),
+                        "Месторождение": data.get("field"),
+                        "Пласт": data.get("formation"),
+                        "Куст": data.get("well", "").split()[2] if len(data.get("well", "").split()) > 2 else data.get(
+                            "well", ""),
+                        "№скв.": data.get("well", "").split()[0] if data.get("well") else data.get("well", ""),
+                        "Категория скважин": category,
+                        "Вид исследования": data.get("type_of_research"),
+                        "Исполнитель (организация)": "ИТС",
+                        "Интерпретатор": data.get("interpreter"),
+                        "Наличие в базе": "база",
+                        "Оборудование": data.get("device", "").split()[1] if len(
+                            data.get("device", "").split()) > 1 else data.get("device", ""),
+                        "Назначение": "Запрос ДО",
+                        "Класс исследования": data.get("klass"),
+                        "Успешность": data.get("success"),
+                        "Длительность факт": data.get("duration"),
+                        "Qн": data.get("Qoil")
+                    }
+
+                    # Открытие файла Excel
+                    logging.info("Обновление Helper.xlsm")
+                    excel_helper = win32com.client.DispatchEx("Excel.Application")
+                    excel_helper.Visible = False
+                    excel_helper.DisplayAlerts = False
+
+                    excel_file_path_helper = resource_path("Helper.xlsm")
+                    if not os.path.exists(excel_file_path_helper):
+                        logger.warning(f"Файл Helper.xlsm не найден: {excel_file_path_helper}")
+                        return False
+
+                    # Открываем Helper.xlsm
+                    workbook = excel_helper.Workbooks.Open(excel_file_path_helper)
+                    sheet1 = workbook.Sheets['Sheet1']
+
+                    # Находим первую полностью пустую строку
+                    empty_row_index = sheet1.Cells(sheet1.Rows.Count, 4).End(-4162).Row + 1
+
+                    # Добавляем значения из словаря в соответствующие столбцы
+                    for key, value in new_row.items():
+                        column_index = None
+                        for col in sheet1.Range(sheet1.Cells(1, 1), sheet1.Cells(1, sheet1.Columns.Count)).Columns:
+                            if col.Cells(1, 1).Value == key:
+                                column_index = col.Cells(1, 1).Column
+                                break
+
+                        if column_index is not None:
+                            sheet1.Cells(empty_row_index, column_index).Value = value
+
+                    # Сохраняем книгу
+                    workbook.Save()
+                    logger.info("Данные успешно записаны в Helper.xlsm")
+
+                except Exception as e:
+                    logger.error(f"Ошибка при работе с Helper.xlsm: {str(e)}")
+                finally:
+                    if 'workbook' in locals() and workbook is not None:
+                        try:
+                            workbook.Close(SaveChanges=True)
+                        except Exception as e:
+                            logging.warning(f"Ошибка при закрытии Workbook: {str(e)}")
+                    if excel_helper:
+                        excel_helper.Quit()
+
+                logger.info("Отчет успешно сформирован!")
+                return True
+
+            except Exception as e:
+                logging.error(f"Ошибка при формировании отчета: {str(e)}", exc_info=True)
+                raise RuntimeError(f"Ошибка при формировании отчета: {str(e)}")
+
+            finally:
+                if db:
+                    db.close()
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            logging.error(f"Ошибка при формировании отчета: {str(e)}", exc_info=True)
+            return False
+
+
     def generate_report(self):
         """УПРОЩЕННАЯ ВЕРСИЯ ДЛЯ РАБОТЫ С БАЗОЙ ДАННЫХ"""
         global db
@@ -2515,7 +2574,7 @@ class ReportGUI:
 
             # Вызываем функцию для формирования отчета
             logging.info(f"Вызов generate_report_logic с параметрами: {output_file_path_docx}, {selected_template_key}")
-            success = generate_report_logic(doc, output_file_path_docx, selected_template_key)
+            success = self.generate_report_logic(doc, output_file_path_docx, selected_template_key)
             fix_units(doc)
             if success:
                 # Сохраняем финальную версию документа
