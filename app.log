@@ -1,41 +1,132 @@
-2025-09-02 01:25:01,367 - utils - INFO - Успешное подключение к базе данных: C:\Work\GUI_ITC\research_data.accdb
-2025-09-02 01:25:07,311 - utils - INFO - Все данные из таблиц успешно удалены.
-2025-09-02 01:25:07,312 - root - INFO - База данных очищена при запуске
-2025-09-02 01:25:35,016 - root - INFO - Данные успешно добавлены в InputData с ID: 58
-2025-09-02 01:25:35,016 - root - INFO - Основные данные сохранены с ID: 58
-2025-09-02 01:25:54,314 - root - INFO - Поправки сохранены для записи ID: 58
-2025-09-02 01:25:54,316 - root - INFO - Успешность сохранена для записи ID: 58
-2025-09-02 01:25:54,317 - root - INFO - Класс исследования сохранен для записи ID: 58
-2025-09-02 01:25:54,318 - root - INFO - Расчетное время сохранено для записи ID: 58
-2025-09-02 01:25:54,319 - root - INFO - Плотность сохранена для записи ID: 58
-2025-09-02 01:25:54,320 - root - INFO - Все данные для записи 58 обновлены
-2025-09-02 01:27:05,319 - root - INFO - Данные PressureVNK сохранены для записи ID: 58
-2025-09-02 01:27:39,568 - root - INFO - Данные ModelVNK сохранены для ID: 58
-2025-09-02 01:28:05,129 - root - INFO - Поправки сохранены для записи ID: 58
-2025-09-02 01:28:05,132 - root - ERROR - Ошибка вставки успешности: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:28:05,132 - root - ERROR - Ошибка обновления данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:28:05,132 - root - ERROR - Ошибка при сохранении данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:28:28,228 - root - INFO - Поправки сохранены для записи ID: 58
-2025-09-02 01:28:28,228 - root - ERROR - Ошибка вставки успешности: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:28:28,228 - root - ERROR - Ошибка обновления данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:28:28,229 - root - ERROR - Ошибка при сохранении данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:28:46,911 - root - INFO - Поправки сохранены для записи ID: 58
-2025-09-02 01:28:46,911 - root - ERROR - Ошибка вставки успешности: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:28:46,912 - root - ERROR - Ошибка обновления данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:28:46,912 - root - ERROR - Ошибка при сохранении данных: ('23000', '[23000] [Microsoft][ODBC Microsoft Access Driver] The changes you requested to the table were not successful because they would create duplicate values in the index, primary key, or relationship. Change the data in the field or fields that contain duplicate data, remove the index, or redefine the index to permit duplicate entries and try again. (-1605) (SQLExecDirectW)')
-2025-09-02 01:29:24,619 - root - ERROR - Ошибка получения давления ModelVNK: ('07002', '[07002] [Microsoft][ODBC Microsoft Access Driver] Too few parameters. Expected 2. (-3010) (SQLExecDirectW)')
-2025-09-02 01:29:24,622 - root - INFO - Рассчитанные давления сохранены для записи ID: 58
-2025-09-02 01:29:24,623 - root - INFO - Рассчитанные давления сохранены: {'PzabVnk': 113.4000015258789, 'PzabGlubZam': 112.4000015258789, 'PzabVdp': 113.4000015258789, 'PzabGnk': 113.4000015258789}
-2025-09-02 01:29:24,623 - root - INFO - Рассчитанные давления: {'PzabVnk': 113.4000015258789, 'PzabGlubZam': 112.4000015258789, 'PzabVdp': 113.4000015258789, 'PzabGnk': 113.4000015258789}
-2025-09-02 01:29:24,624 - root - ERROR - Ошибка получения последнего давления: ('07002', '[07002] [Microsoft][ODBC Microsoft Access Driver] Too few parameters. Expected 2. (-3010) (SQLExecDirectW)')
-2025-09-02 01:29:24,661 - root - INFO - Таблица calculate обновлена
-2025-09-02 01:29:24,661 - root - INFO - Таблица calculate успешно обновлена
-2025-09-02 01:34:53,641 - utils - INFO - Соединение с базой данных закрыто.
-C:\Work\GUI_ITC\db_access.py:1030: UserWarning:
+2025-09-02 16:50:26,148 - utils - INFO - Успешное подключение к базе данных: C:\Work\GUI_ITC\research_data.accdb
+2025-09-02 16:50:26,162 - utils - INFO - Все данные из таблиц успешно удалены.
+2025-09-02 16:50:26,163 - root - INFO - База данных очищена при запуске
+2025-09-02 16:50:46,807 - root - INFO - Данные успешно добавлены в InputData с ID: 76
+2025-09-02 16:50:46,807 - root - INFO - Основные данные сохранены с ID: 76
+2025-09-02 16:51:11,181 - root - INFO - Очищена таблица success для ID: 76
+2025-09-02 16:51:11,181 - root - INFO - Очищена таблица researchClass для ID: 76
+2025-09-02 16:51:11,182 - root - INFO - Очищена таблица pressureLastPoint для ID: 76
+2025-09-02 16:51:11,183 - root - INFO - Очищена таблица estimatedTime для ID: 76
+2025-09-02 16:51:11,183 - root - INFO - Очищена таблица density для ID: 76
+2025-09-02 16:51:11,184 - root - INFO - Очищена таблица amendments для ID: 76
+2025-09-02 16:51:11,185 - root - INFO - Очищена таблица prevData для ID: 76
+2025-09-02 16:51:11,194 - root - INFO - Поправки сохранены для записи ID: 76
+2025-09-02 16:51:11,195 - root - INFO - Успешность сохранена для записи ID: 76
+2025-09-02 16:51:11,197 - root - INFO - Класс исследования сохранен для записи ID: 76
+2025-09-02 16:51:11,198 - root - INFO - Расчетное время сохранено для записи ID: 76
+2025-09-02 16:51:11,199 - root - INFO - Плотность сохранена для записи ID: 76
+2025-09-02 16:51:11,199 - root - INFO - Все данные для записи 76 обновлены
+2025-09-02 16:51:57,107 - root - INFO - Данные PressureVNK сохранены через text import для ID: 76
+2025-09-02 16:52:28,315 - root - INFO - Данные ModelVNK сохранены для ID: 76
+2025-09-02 16:52:46,944 - root - INFO - Начинаем импорт для field: ЧАЯНДИНСКОЕ, well: 1057G куст 12
+2025-09-02 16:52:46,945 - root - INFO - Ищем файл: C:\Work\GUI_ITC\table_prev\Итоговая таблица_Чаяндинское.xlsx
+2025-09-02 16:52:46,945 - root - INFO - Читаем Excel файл...
+2025-09-02 16:52:47,294 - root - INFO - Ищем данные для скважины: 1057G
+2025-09-02 16:52:47,296 - root - INFO - Найдено записей для скважины 1057G: 17
+2025-09-02 16:52:47,297 - root - INFO - Данные для сохранения: {'PplVnk': 114.4, 'PzabVnk': 110.6, 'DataRes': Timestamp('2025-05-25 00:00:00'), 'Water': 99.9, 'Q': 204.8, 'Kprod': 54.18, 'Smeh': '/-8.24', 'Heff': 16.1, 'Kgidr': 167.82, 'InputData_ID': 76}
+2025-09-02 16:52:47,297 - root - INFO - Параметры для вставки в prevData:
+2025-09-02 16:52:47,297 - root - INFO -   Параметр 0: 114.4 (type: float)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 1: 110.6 (type: float)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 2: 2025-05-25 00:00:00 (type: Timestamp)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 3: 99.9 (type: float)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 4: 204.8 (type: float)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 5: 54.18 (type: float)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 6: -8.24 (type: float)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 7: 16.1 (type: float)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 8: 167.82 (type: float)
+2025-09-02 16:52:47,298 - root - INFO -   Параметр 9: 76 (type: int)
+2025-09-02 16:52:47,298 - root - INFO - Данные предыдущего исследования сохранены для ID: 76
+2025-09-02 16:52:47,299 - root - INFO - Данные предыдущего исследования сохранены в базу
+2025-09-02 16:52:47,299 - root - INFO - Данные предыдущего исследования успешно импортированы
+2025-09-02 16:52:47,311 - root - INFO - Рассчитанные давления сохранены для записи ID: 76
+2025-09-02 16:52:47,311 - root - INFO - Рассчитанные давления сохранены: {'PplVnk': 114.3694076538086, 'PplGlubZam': 113.3694076538086, 'PplVdp': 114.3694076538086, 'PplGnk': 114.3694076538086, 'PzabVnk': 110.58999633789062, 'PzabGlubZam': 109.58999633789062, 'PzabVdp': 110.58999633789062, 'PzabGnk': 110.58999633789062}
+2025-09-02 16:52:47,311 - root - INFO - Рассчитанные давления: {'PplVnk': 114.3694076538086, 'PplGlubZam': 113.3694076538086, 'PplVdp': 114.3694076538086, 'PplGnk': 114.3694076538086, 'PzabVnk': 110.58999633789062, 'PzabGlubZam': 109.58999633789062, 'PzabVdp': 110.58999633789062, 'PzabGnk': 110.58999633789062}
+2025-09-02 16:52:47,512 - root - INFO - Таблица calculate обновлена
+2025-09-02 16:52:47,512 - root - INFO - Таблица calculate успешно обновлена
+2025-09-02 16:55:06,707 - root - INFO - Начинаем импорт для field: ЧАЯНДИНСКОЕ, well: 1057G куст 12
+2025-09-02 16:55:06,707 - root - INFO - Ищем файл: C:\Work\GUI_ITC\table_prev\Итоговая таблица_Чаяндинское.xlsx
+2025-09-02 16:55:06,707 - root - INFO - Читаем Excel файл...
+2025-09-02 16:55:07,090 - root - INFO - Ищем данные для скважины: 1057G
+2025-09-02 16:55:07,092 - root - INFO - Найдено записей для скважины 1057G: 17
+2025-09-02 16:55:07,094 - root - INFO - Данные для сохранения: {'PplVnk': 114.4, 'PzabVnk': 110.6, 'DataRes': Timestamp('2025-05-25 00:00:00'), 'Water': 99.9, 'Q': 204.8, 'Kprod': 54.18, 'Smeh': '/-8.24', 'Heff': 16.1, 'Kgidr': 167.82, 'InputData_ID': 76}
+2025-09-02 16:55:07,095 - root - INFO - Параметры для вставки в prevData:
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 0: 114.4 (type: float)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 1: 110.6 (type: float)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 2: 2025-05-25 00:00:00 (type: Timestamp)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 3: 99.9 (type: float)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 4: 204.8 (type: float)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 5: 54.18 (type: float)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 6: -8.24 (type: float)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 7: 16.1 (type: float)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 8: 167.82 (type: float)
+2025-09-02 16:55:07,095 - root - INFO -   Параметр 9: 76 (type: int)
+2025-09-02 16:55:07,096 - root - INFO - Данные предыдущего исследования сохранены для ID: 76
+2025-09-02 16:55:07,096 - root - INFO - Данные предыдущего исследования сохранены в базу
+2025-09-02 16:55:07,096 - root - INFO - Данные предыдущего исследования успешно импортированы
+2025-09-02 16:55:07,106 - root - INFO - Рассчитанные давления сохранены для записи ID: 76
+2025-09-02 16:55:07,106 - root - INFO - Рассчитанные давления сохранены: {'PplVnk': 114.3694076538086, 'PplGlubZam': 113.3694076538086, 'PplVdp': 114.3694076538086, 'PplGnk': 114.3694076538086, 'PzabVnk': 110.58999633789062, 'PzabGlubZam': 109.58999633789062, 'PzabVdp': 110.58999633789062, 'PzabGnk': 110.58999633789062}
+2025-09-02 16:55:07,106 - root - INFO - Рассчитанные давления: {'PplVnk': 114.3694076538086, 'PplGlubZam': 113.3694076538086, 'PplVdp': 114.3694076538086, 'PplGnk': 114.3694076538086, 'PzabVnk': 110.58999633789062, 'PzabGlubZam': 109.58999633789062, 'PzabVdp': 110.58999633789062, 'PzabGnk': 110.58999633789062}
+2025-09-02 16:55:07,317 - root - INFO - Таблица calculate обновлена
+2025-09-02 16:55:07,317 - root - INFO - Таблица calculate успешно обновлена
+2025-09-02 16:55:47,391 - root - INFO - Начинаем импорт для field: ЧАЯНДИНСКОЕ, well: 1057G куст 12
+2025-09-02 16:55:47,391 - root - INFO - Ищем файл: C:\Work\GUI_ITC\table_prev\Итоговая таблица_Чаяндинское.xlsx
+2025-09-02 16:55:47,391 - root - INFO - Читаем Excel файл...
+2025-09-02 16:55:47,733 - root - INFO - Ищем данные для скважины: 1057G
+2025-09-02 16:55:47,735 - root - INFO - Найдено записей для скважины 1057G: 17
+2025-09-02 16:55:47,735 - root - INFO - Данные для сохранения: {'PplVnk': 114.4, 'PzabVnk': 110.6, 'DataRes': Timestamp('2025-05-25 00:00:00'), 'Water': 99.9, 'Q': 204.8, 'Kprod': 54.18, 'Smeh': '/-8.24', 'Heff': 16.1, 'Kgidr': 167.82, 'InputData_ID': 76}
+2025-09-02 16:55:47,736 - root - INFO - Параметры для вставки в prevData:
+2025-09-02 16:55:47,736 - root - INFO -   Параметр 0: 114.4 (type: float)
+2025-09-02 16:55:47,736 - root - INFO -   Параметр 1: 110.6 (type: float)
+2025-09-02 16:55:47,736 - root - INFO -   Параметр 2: 2025-05-25 00:00:00 (type: Timestamp)
+2025-09-02 16:55:47,736 - root - INFO -   Параметр 3: 99.9 (type: float)
+2025-09-02 16:55:47,736 - root - INFO -   Параметр 4: 204.8 (type: float)
+2025-09-02 16:55:47,736 - root - INFO -   Параметр 5: 54.18 (type: float)
+2025-09-02 16:55:47,737 - root - INFO -   Параметр 6: -8.24 (type: float)
+2025-09-02 16:55:47,737 - root - INFO -   Параметр 7: 16.1 (type: float)
+2025-09-02 16:55:47,737 - root - INFO -   Параметр 8: 167.82 (type: float)
+2025-09-02 16:55:47,737 - root - INFO -   Параметр 9: 76 (type: int)
+2025-09-02 16:55:47,737 - root - INFO - Данные предыдущего исследования сохранены для ID: 76
+2025-09-02 16:55:47,737 - root - INFO - Данные предыдущего исследования сохранены в базу
+2025-09-02 16:55:47,737 - root - INFO - Данные предыдущего исследования успешно импортированы
+2025-09-02 16:55:47,747 - root - INFO - Рассчитанные давления сохранены для записи ID: 76
+2025-09-02 16:55:47,747 - root - INFO - Рассчитанные давления сохранены: {'PplVnk': 114.3694076538086, 'PplGlubZam': 113.3694076538086, 'PplVdp': 114.3694076538086, 'PplGnk': 114.3694076538086, 'PzabVnk': 110.58999633789062, 'PzabGlubZam': 109.58999633789062, 'PzabVdp': 110.58999633789062, 'PzabGnk': 110.58999633789062}
+2025-09-02 16:55:47,747 - root - INFO - Рассчитанные давления: {'PplVnk': 114.3694076538086, 'PplGlubZam': 113.3694076538086, 'PplVdp': 114.3694076538086, 'PplGnk': 114.3694076538086, 'PzabVnk': 110.58999633789062, 'PzabGlubZam': 109.58999633789062, 'PzabVdp': 110.58999633789062, 'PzabGnk': 110.58999633789062}
+2025-09-02 16:55:47,956 - root - INFO - Таблица calculate обновлена
+2025-09-02 16:55:47,956 - root - INFO - Таблица calculate успешно обновлена
+2025-09-02 16:56:43,360 - utils - INFO - Соединение с базой данных закрыто.
+C:\Work\GUI_ITC\db_access.py:1451: FutureWarning:
+
+use_inf_as_na option is deprecated and will be removed in a future version. Convert inf values to NaN before operating instead.
+
+C:\Work\GUI_ITC\db_access.py:1119: UserWarning:
 
 pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
 
-C:\Work\GUI_ITC\db_access.py:649: UserWarning:
+C:\Work\GUI_ITC\db_access.py:731: UserWarning:
+
+pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+
+C:\Work\GUI_ITC\db_access.py:1451: FutureWarning:
+
+use_inf_as_na option is deprecated and will be removed in a future version. Convert inf values to NaN before operating instead.
+
+C:\Work\GUI_ITC\db_access.py:1119: UserWarning:
+
+pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+
+C:\Work\GUI_ITC\db_access.py:731: UserWarning:
+
+pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+
+C:\Work\GUI_ITC\db_access.py:1451: FutureWarning:
+
+use_inf_as_na option is deprecated and will be removed in a future version. Convert inf values to NaN before operating instead.
+
+C:\Work\GUI_ITC\db_access.py:1119: UserWarning:
+
+pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+
+C:\Work\GUI_ITC\db_access.py:731: UserWarning:
 
 pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
 

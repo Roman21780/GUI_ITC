@@ -1462,6 +1462,9 @@ class ReportGUI:
                 messagebox.showerror("Ошибка", "Не удалось создать основную запись!")
                 return
 
+            # ОЧИСТКА: Удаляем старые данные перед сохранением новых
+            self.db.clear_related_data(main_data_id)
+
             # Подготавливаем данные для сохранения
             update_data = {}
 
@@ -1508,6 +1511,7 @@ class ReportGUI:
         except Exception as e:
             logging.error(f"Ошибка при сохранении данных: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
+
 
     def collect_amendments_from_gui(self):
         """Собирает поправки из полей ввода GUI"""
@@ -1723,35 +1727,12 @@ class ReportGUI:
 
         try:
             # ИСПРАВЛЕНО: вставляем в PressureVNK
-            self.db.insert_pressure_vnk(main_data_id, data_list)
+            self.db.insert_pressure_vnk_text_file(main_data_id, data_list)
             messagebox.showinfo("Успех", "Данные давления сохранены в базу данных")
         except Exception as e:
             logging.error(f"Ошибка при сохранении данных давления: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
 
-    def calculate_and_save_pressure(self):
-        """Вызывает расчет давлений и сохраняет результат"""
-        try:
-            main_data_id = self.ensure_main_data_exists()
-            if main_data_id is None:
-                messagebox.showerror("Ошибка", "Нет основной записи!")
-                return
-
-            # Получаем значение из окошка "Р_п.т."
-            pressure_pt = self.pressure_last_point_entry.get()
-            pressure_value = ReportGUI.convert_value(pressure_pt) if pressure_pt else None
-
-            # Вызываем расчет в базе данных
-            calculated_data = self.db.calculate_pressure_values(main_data_id, pressure_value)
-
-            if calculated_data:
-                messagebox.showinfo("Успех", "Давления успешно рассчитаны и сохранены!")
-            else:
-                messagebox.showinfo("Информация", "Недостаточно данных для расчета давлений")
-
-        except Exception as e:
-            logging.error(f"Ошибка расчета давлений: {str(e)}")
-            messagebox.showerror("Ошибка", f"Ошибка расчета: {str(e)}")
 
     @staticmethod
     def convert_value(value):
@@ -1939,13 +1920,31 @@ class ReportGUI:
             logging.warning(f"Ошибка при завершении процесса Excel: {str(e)}")
 
     def perform_calculations(self):
-        """Выполняет расчеты для таблиц calculate и calculatedPressure"""
+        """Выполняет расчеты для таблиц calculate, calculatedPressure и импорт предыдущих данных"""
         try:
             # Получаем ID основной записи
             main_data_id = self.ensure_main_data_exists()
             if main_data_id is None:
                 messagebox.showerror("Ошибка", "Нет основной записи для расчета!")
                 return
+
+            # 0. Импорт данных предыдущего исследования
+            try:
+                # Получаем данные напрямую из базы, избегая проблем с pandas
+                field_name = self.db.get_field_name(main_data_id)
+                well_name = self.db.get_well_name(main_data_id)
+
+                if field_name and well_name:
+                    import_success = self.db.import_previous_research_data(main_data_id, field_name, well_name)
+                    if import_success:
+                        logging.info("Данные предыдущего исследования успешно импортированы")
+                    else:
+                        logging.info("Данные предыдущего исследования не найдены")
+                else:
+                    logging.warning(f"Недостаточно данных для импорта: field={field_name}, well={well_name}")
+
+            except Exception as e:
+                logging.warning(f"Не удалось импортировать предыдущие данные: {str(e)}")
 
             # 1. Расчет для calculatedPressure
             try:
@@ -1969,6 +1968,7 @@ class ReportGUI:
                 return
 
             messagebox.showinfo("Успех", "Расчеты успешно выполнены!\n\n"
+                                         "• Импорт предыдущих данных (если найдены)\n"
                                          "• Рассчитаны давления (calculatedPressure)\n"
                                          "• Обновлена таблица calculate")
 
@@ -1979,6 +1979,7 @@ class ReportGUI:
     def calculate_and_save_pressure_values(self, main_data_id):
         """Рассчитывает и сохраняет значения для calculatedPressure"""
         try:
+
             # Вызываем расчет в базе данных
             calculated_data = self.db.calculate_pressure_values(main_data_id)
 
@@ -2060,82 +2061,102 @@ class ReportGUI:
                     raise ValueError(f"Неверное имя шаблона: {selected_template}. "
                                      f"Доступные шаблоны: {list(template_map.keys())}")
 
-                # Добавление данных из предыдущего исследования --------------------------------------
+                # # Добавление данных из предыдущего исследования --------------------------------------
                 try:
-                    field_name = data.get('field', '').replace(" ", "_").capitalize()
-                    previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
-                    previous_data_path = table_prev_path(previous_data_file)
+                    # Импортируем данные предыдущего исследования
+                    field_name = data.get('field', '')
+                    well_name = data.get('well', '')
 
-                    if os.path.exists(previous_data_path):
-                        try:
-                            final_table_df = pd.read_excel(previous_data_path, skiprows=11)
-                            well_num = data.get('well', '').split()[0] if data.get('well') else ''
-                            logging.info(f"Скважина: {well_num}")
-
-                            # Фильтруем данные по номеру скважины
-                            final_table_df['Скважина'] = final_table_df['Скважина'].astype(str).str.strip()
-                            final_table_df = final_table_df.dropna(subset=['Скважина'])
-                            filtered_data = final_table_df[final_table_df['Скважина'] == well_num]
-
-                            if not filtered_data.empty:
-                                # Обработка данных из файла
-                                pd.set_option('mode.use_inf_as_na', True)
-                                filtered_data.loc[:, 'Дата испытания'] = filtered_data['Дата испытания'].apply(
-                                    lambda x: datetime.strptime(x, "%d.%m.%Y") if isinstance(x, str) else x
-                                )
-
-                                latest_entry = filtered_data.loc[filtered_data['Дата испытания'].idxmax()]
-
-                                # СОХРАНЯЕМ ДАННЫЕ В ТАБЛИЦУ prevData
-                                prev_data = {
-                                    'PplVnk': latest_entry.get('Рпл  на ВНК, кгс/см2'),
-                                    'PzabVnk': latest_entry.get('Рзаб  на ВНК, кгс/см2'),
-                                    'DataRes': latest_entry.get('Дата испытания'),
-                                    'Water': latest_entry.get('% воды'),
-                                    'Q': latest_entry.get('Qж/Qг, м3/сут'),
-                                    'Kprod': latest_entry.get('Кпрод. м3/сут*кгс/см2'),
-                                    'Smeh': latest_entry.get('Скин-фактор механич./интегр.'),
-                                    'Heff': latest_entry.get('Нэф., м.'),
-                                    'Kgidr': latest_entry.get('Кгидр., Д*см/сПз'),
-                                    'InputData_ID': main_data_id  # Связь с текущим исследованием
-                                }
-
-                                # Сохраняем в базу данных
-                                self.db.insert_prev_data(prev_data)
-                                logging.info("Данные предыдущего исследования сохранены в базу")
-
-                                # Нормализуем строки для отчета
-                                final_table_df = final_table_df.map(
-                                    lambda x: normalize_string(x) if isinstance(x, str) else x)
-                                final_table_df.columns = [normalize_string(col) for col in final_table_df.columns]
-
-                                result_dict = {
-                                    normalize_string('Рпл  на ВНК, кгс/см2'): latest_entry['Рпл  на ВНК, кгс/см2'],
-                                    normalize_string('Рзаб  на ВНК, кгс/см2'): latest_entry['Рзаб  на ВНК, кгс/см2'],
-                                    normalize_string('Дата испытания'): latest_entry['Дата испытания'].strftime(
-                                        "%d.%m.%Y"),
-                                    normalize_string('% воды'): str(latest_entry['% воды']),
-                                    normalize_string('Qж/Qг, м3/сут   '): str(latest_entry['Qж/Qг, м3/сут   ']),
-                                    normalize_string('Кпрод. м3/сут*кгс/см2'): str(
-                                        latest_entry['Кпрод. м3/сут*кгс/см2']),
-                                    normalize_string('Скин-фактор механич./интегр.'): str(
-                                        latest_entry['Скин-фактор механич./интегр.']),
-                                    normalize_string('Нэф., м.'): str(latest_entry['Нэф., м. ']),
-                                    normalize_string('Кгидр., Д*см/сПз'): str(latest_entry['Кгидр., Д*см/сПз'])
-                                }
-
-                                replace_tags_only(doc, result_dict)
-                                logging.info("Данные из файла предыдущих исследований успешно загружены.")
-
-                        except Exception as e:
-                            logging.error(f"Ошибка при чтении файла предыдущих данных Excel: {str(e)}")
-
-                    else:
-                        logging.warning(f"Файл предыдущих данных не найден: {previous_data_path}")
-                        logging.info("Для данного отчета не требуется файл с предыдущими данными.")
+                    if field_name and well_name:
+                        success = self.db.import_previous_research_data(main_data_id, field_name, well_name)
+                        if success:
+                            logging.info("Данные предыдущего исследования успешно импортированы")
+                        else:
+                            logging.info("Данные предыдущего исследования не найдены или не требуются")
 
                 except Exception as e:
                     logging.error(f"Ошибка при работе с историческими данными: {e}", exc_info=True)
+
+                # После импорта данных получаем их для отчета
+                previous_data = self.db.get_previous_research_data(main_data_id)
+                if previous_data:
+                    replace_tags_only(doc, previous_data)
+                    logging.info("Данные предыдущего исследования добавлены в отчет")
+                # try:
+                #     field_name = data.get('field', '').replace(" ", "_").capitalize()
+                #     previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
+                #     previous_data_path = table_prev_path(previous_data_file)
+                #
+                #     if os.path.exists(previous_data_path):
+                #         try:
+                #             final_table_df = pd.read_excel(previous_data_path, skiprows=11)
+                #             well_num = data.get('well', '').split()[0] if data.get('well') else ''
+                #             logging.info(f"Скважина: {well_num}")
+                #
+                #             # Фильтруем данные по номеру скважины
+                #             final_table_df['Скважина'] = final_table_df['Скважина'].astype(str).str.strip()
+                #             final_table_df = final_table_df.dropna(subset=['Скважина'])
+                #             filtered_data = final_table_df[final_table_df['Скважина'] == well_num]
+                #
+                #             if not filtered_data.empty:
+                #                 # Обработка данных из файла
+                #                 pd.set_option('mode.use_inf_as_na', True)
+                #                 filtered_data.loc[:, 'Дата испытания'] = filtered_data['Дата испытания'].apply(
+                #                     lambda x: datetime.strptime(x, "%d.%m.%Y") if isinstance(x, str) else x
+                #                 )
+                #
+                #                 latest_entry = filtered_data.loc[filtered_data['Дата испытания'].idxmax()]
+                #
+                #                 # СОХРАНЯЕМ ДАННЫЕ В ТАБЛИЦУ prevData
+                #                 prev_data = {
+                #                     'PplVnk': latest_entry.get('Рпл  на ВНК, кгс/см2'),
+                #                     'PzabVnk': latest_entry.get('Рзаб  на ВНК, кгс/см2'),
+                #                     'DataRes': latest_entry.get('Дата испытания'),
+                #                     'Water': latest_entry.get('% воды'),
+                #                     'Q': latest_entry.get('Qж/Qг, м3/сут'),
+                #                     'Kprod': latest_entry.get('Кпрод. м3/сут*кгс/см2'),
+                #                     'Smeh': latest_entry.get('Скин-фактор механич./интегр.'),
+                #                     'Heff': latest_entry.get('Нэф., м.'),
+                #                     'Kgidr': latest_entry.get('Кгидр., Д*см/сПз'),
+                #                     'InputData_ID': main_data_id  # Связь с текущим исследованием
+                #                 }
+                #
+                #                 # Сохраняем в базу данных
+                #                 self.db.insert_prev_data(prev_data)
+                #                 logging.info("Данные предыдущего исследования сохранены в базу")
+                #
+                #                 # Нормализуем строки для отчета
+                #                 final_table_df = final_table_df.map(
+                #                     lambda x: normalize_string(x) if isinstance(x, str) else x)
+                #                 final_table_df.columns = [normalize_string(col) for col in final_table_df.columns]
+                #
+                #                 result_dict = {
+                #                     normalize_string('Рпл  на ВНК, кгс/см2'): latest_entry['Рпл  на ВНК, кгс/см2'],
+                #                     normalize_string('Рзаб  на ВНК, кгс/см2'): latest_entry['Рзаб  на ВНК, кгс/см2'],
+                #                     normalize_string('Дата испытания'): latest_entry['Дата испытания'].strftime(
+                #                         "%d.%m.%Y"),
+                #                     normalize_string('% воды'): str(latest_entry['% воды']),
+                #                     normalize_string('Qж/Qг, м3/сут   '): str(latest_entry['Qж/Qг, м3/сут   ']),
+                #                     normalize_string('Кпрод. м3/сут*кгс/см2'): str(
+                #                         latest_entry['Кпрод. м3/сут*кгс/см2']),
+                #                     normalize_string('Скин-фактор механич./интегр.'): str(
+                #                         latest_entry['Скин-фактор механич./интегр.']),
+                #                     normalize_string('Нэф., м.'): str(latest_entry['Нэф., м. ']),
+                #                     normalize_string('Кгидр., Д*см/сПз'): str(latest_entry['Кгидр., Д*см/сПз'])
+                #                 }
+                #
+                #                 replace_tags_only(doc, result_dict)
+                #                 logging.info("Данные из файла предыдущих исследований успешно загружены.")
+                #
+                #         except Exception as e:
+                #             logging.error(f"Ошибка при чтении файла предыдущих данных Excel: {str(e)}")
+                #
+                #     else:
+                #         logging.warning(f"Файл предыдущих данных не найден: {previous_data_path}")
+                #         logging.info("Для данного отчета не требуется файл с предыдущими данными.")
+                #
+                # except Exception as e:
+                #     logging.error(f"Ошибка при работе с историческими данными: {e}", exc_info=True)
 
                 # Расчет плотности
                 KVD_density = data.get('dens2', 0)

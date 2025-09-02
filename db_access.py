@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime
 from tkinter import messagebox
 import math
+import sys
 
 class AccessDatabase:
     def __init__(self, db_path='research_data.accdb'):
@@ -35,16 +36,29 @@ class AccessDatabase:
             logger.info("Соединение с базой данных закрыто.")
 
     def get_last_record(self):
-        """Возвращает последнюю запись из InputData"""
+        """Возвращает последнюю запись из InputData в правильном формате"""
         try:
             conn = self.get_connection()
             query = "SELECT TOP 1 * FROM InputData ORDER BY ID DESC"
-            with conn.cursor() as cursor:
-                cursor.execute(query)
-                columns = [column[0] for column in cursor.description]
-                data = cursor.fetchall()
-                df = pd.DataFrame(data, columns=columns)
+            df = pd.read_sql(query, conn)
+
+            if df.empty:
+                return pd.DataFrame()
+
+            # Убедимся, что все колонки присутствуют
+            expected_columns = ['ID', 'Company', 'Localoredenie', 'Skvazhina', 'VNK',
+                                'Data_issledovaniya', 'Plast', 'Interval_perforacii',
+                                'Tip_pribora', 'Glubina_ustanovki_pribora', 'Interpretator',
+                                'Data_interpretacii', 'Vremya_issledovaniya', 'Obvodnennost',
+                                'Nalicie_paktera', 'Data_GRP', 'Vid_issledovaniya', 'created_date']
+
+            # Добавляем отсутствующие колонки с значениями None
+            for col in expected_columns:
+                if col not in df.columns:
+                    df[col] = None
+
             return df
+
         except Exception as e:
             logging.error(f"Ошибка получения последней записи: {str(e)}")
             return pd.DataFrame()
@@ -228,6 +242,10 @@ class AccessDatabase:
             conn = self.get_connection()
             cursor = conn.cursor()
 
+            # Очищаем предыдущие данные
+            cursor.execute("DELETE FROM ModelVNK WHERE InputData_ID = ?", (input_data_id,))
+            conn.commit()
+
             inserted_count = 0
 
             for i, data in enumerate(data_list):
@@ -270,85 +288,6 @@ class AccessDatabase:
             print(f"Ошибка преобразования '{value}': {e}")
             return 0.0
 
-    def calculate_pressure_vnk_model(self, input_data_id, research_type):
-        """Рассчитывает PressureVnkModel на основе данных исследования"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-
-            # Получаем все записи для этого исследования
-            cursor.execute("""
-                           SELECT ID, DT, deltaP, DP, PressureVnkModel
-                           FROM ModelVNK
-                           WHERE InputData_ID = ?
-                           ORDER BY ID
-                           """, (input_data_id,))
-
-            records = cursor.fetchall()
-
-            if not records:
-                print("Нет данных для расчета")
-                return
-
-            # Получаем PzabVnk из calculatedParameters
-            cursor.execute("""
-                           SELECT Val
-                           FROM calculatedParameters
-                           WHERE InputData_ID = ?
-                             AND calcParam = 'PzabVnk'
-                           """, (input_data_id,))
-
-            pzab_vnk_result = cursor.fetchone()
-            pzab_vnk = pzab_vnk_result[0] if pzab_vnk_result else None
-
-            if pzab_vnk is None:
-                print("Не найдено PzabVnk для расчета")
-                return
-
-            print(f"PzabVnk для расчета: {pzab_vnk}")
-            print(f"Тип исследования: {research_type}")
-            print(f"Найдено записей: {len(records)}")
-
-            # Расчет значений PressureVnkModel
-            for i, record in enumerate(records):
-                record_id, dt, delta_p, dp, current_value = record
-
-                if "КПД" in research_type.upper():
-                    # Логика для КПД исследований
-                    if i == 0:
-                        new_value = pzab_vnk
-                    elif i == 1:
-                        new_value = pzab_vnk - delta_p
-                    else:
-                        prev_record = records[i - 1]
-                        new_value = prev_record[4] - delta_p + records[i - 1][
-                            2]  # prev PressureVnkModel - deltaP + prev deltaP
-                else:
-                    # Логика для других исследований
-                    if i == 0:
-                        new_value = pzab_vnk
-                    elif i == 1:
-                        new_value = pzab_vnk + delta_p
-                    else:
-                        prev_record = records[i - 1]
-                        new_value = prev_record[4] + delta_p - records[i - 1][
-                            2]  # prev PressureVnkModel + deltaP - prev deltaP
-
-                # Обновляем запись
-                cursor.execute("""
-                               UPDATE ModelVNK
-                               SET PressureVnkModel = ?
-                               WHERE ID = ?
-                               """, (new_value, record_id))
-
-                print(f"Запись {i}: DT={dt}, deltaP={delta_p}, PressureVnkModel={new_value}")
-
-            conn.commit()
-            print("Расчет PressureVnkModel завершен")
-
-        except Exception as e:
-            print(f"Ошибка расчета PressureVnkModel: {e}")
-            raise
 
     def get_research_type(self, input_data_id):
         """Получает тип исследования по ID записи"""
@@ -388,7 +327,7 @@ class AccessDatabase:
                            SELECT TOP 1 PressureVnkModel
                            FROM ModelVNK
                            WHERE InputData_ID = ?
-                           ORDER BY ID DESC
+                           ORDER BY Dat DESC
                            """, (input_data_id,))
 
             result = cursor.fetchone()
@@ -399,35 +338,174 @@ class AccessDatabase:
             return None
 
     def insert_pressure_vnk(self, input_data_id, data_list):
-        """Вставляет данные в PressureVNK пакетно"""
+        """Самый быстрый метод для Access"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Пакетная вставка
-            batch_size = 5000  # Вставляем по 5000 записей за раз
-            for i in range(0, len(data_list), batch_size):
-                batch = data_list[i:i + batch_size]
+            # Очищаем предыдущие данные
+            cursor.execute("DELETE FROM PressureVNK WHERE InputData_ID = ?", (input_data_id,))
+            conn.commit()
 
-                # Создаем пакетный запрос
-                values = []
-                for data in batch:
-                    values.append((data.get('Dat'), data.get('PressureVnk')))
+            if not data_list:
+                return
 
-                # Пакетная вставка
-                cursor.executemany(
-                    "INSERT INTO PressureVNK (Dat, PressureVnk) VALUES (?, ?)",
-                    values
-                )
-                print(f"Вставлено {len(batch)} записей...")
+            # Отключаем индексы и триггеры для ускорения
+            try:
+                cursor.execute("ALTER TABLE PressureVNK DISABLE INDEX ALL")
+            except:
+                pass  # Игнорируем если нельзя отключить индексы
 
-                # Коммит после каждого пакета
-                conn.commit()
+            # Вставляем данные с отключенным авто-коммитом
+            conn.autocommit = False
+            total_inserted = 0
 
-            logging.info(f"Данные PressureVNK сохранены для записи ID: {input_data_id}")
+            for data in data_list:
+                try:
+                    cursor.execute(
+                        "INSERT INTO PressureVNK (Dat, PressureVnk, InputData_ID) VALUES (?, ?, ?)",
+                        (data.get('Dat'), data.get('PressureVnk'), input_data_id)
+                    )
+                    total_inserted += 1
+
+                    # Коммитим каждые 1000 записей
+                    if total_inserted % 1000 == 0:
+                        conn.commit()
+                        logging.info(f"Вставлено {total_inserted} записей...")
+
+                except Exception as e:
+                    logging.warning(f"Ошибка вставки записи: {e}")
+                    continue
+
+            # Финальный коммит
+            conn.commit()
+
+            # Включаем индексы обратно
+            try:
+                cursor.execute("ALTER TABLE PressureVNK ENABLE INDEX ALL")
+            except:
+                pass
+
+            conn.autocommit = True
+            logging.info(f"Данные PressureVNK сохранены для ID: {input_data_id}, всего записей: {total_inserted}")
 
         except Exception as e:
+            conn.rollback()
             logging.error(f"Ошибка вставки PressureVNK: {str(e)}")
+            raise
+        finally:
+            # Гарантируем, что авто-коммит включен
+            try:
+                conn.autocommit = True
+            except:
+                pass
+
+    def insert_pressure_vnk_fastest(self, input_data_id, data_list):
+        """Самый быстрый метод через CSV и ODBC bulk insert"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Очищаем предыдущие данные
+            cursor.execute("DELETE FROM PressureVNK WHERE InputData_ID = ?", (input_data_id,))
+            conn.commit()
+
+            if not data_list:
+                return
+
+            # Создаем временный CSV файл
+            import tempfile
+            import csv
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, encoding='utf-8') as tmp_file:
+                writer = csv.writer(tmp_file, delimiter=';')
+                writer.writerow(['Dat', 'PressureVnk', 'InputData_ID'])
+
+                for data in data_list:
+                    writer.writerow([
+                        data.get('Dat'),
+                        data.get('PressureVnk'),
+                        input_data_id
+                    ])
+
+                tmp_path = tmp_file.name
+
+            try:
+                # Используем ODBC bulk insert
+                cursor.execute(f"""
+                    INSERT INTO PressureVNK (Dat, PressureVnk, InputData_ID)
+                    SELECT * FROM [Text;HDR=YES;DATABASE={os.path.dirname(tmp_path)}].[{os.path.basename(tmp_path)}]
+                """)
+                conn.commit()
+
+            finally:
+                # Удаляем временный файл
+                os.unlink(tmp_path)
+
+            logging.info(f"Данные PressureVNK сохранены через bulk insert для ID: {input_data_id}")
+
+        except Exception as e:
+            conn.rollback()
+            logging.error(f"Ошибка bulk insert PressureVNK: {str(e)}")
+            raise
+
+    def insert_pressure_vnk_text_file(self, input_data_id, data_list):
+        """Быстрая вставка через текстовый файл с Schema.ini"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Очищаем предыдущие данные
+            cursor.execute("DELETE FROM PressureVNK WHERE InputData_ID = ?", (input_data_id,))
+            conn.commit()
+
+            if not data_list:
+                return
+
+            # Создаем директорию для временных файлов
+            temp_dir = os.path.join(os.path.dirname(self.db_path), "temp_import")
+            os.makedirs(temp_dir, exist_ok=True)
+
+            # Создаем Schema.ini для правильного формата
+            schema_ini = os.path.join(temp_dir, "Schema.ini")
+            with open(schema_ini, 'w', encoding='utf-8') as f:
+                f.write("""[pressure_data.txt]
+    Format=Delimited(;)
+    ColNameHeader=True
+    DateTimeFormat=dd.mm.yyyy hh:nn:ss
+    DecimalSymbol=.
+    Col1=Dat DateTime
+    Col2=PressureVnk Float
+    Col3=InputData_ID Integer
+    """)
+
+            # Создаем data file
+            data_file = os.path.join(temp_dir, "pressure_data.txt")
+            with open(data_file, 'w', encoding='utf-8') as f:
+                f.write("Dat;PressureVnk;InputData_ID\n")
+                for data in data_list:
+                    f.write(f"{data.get('Dat')};{data.get('PressureVnk')};{input_data_id}\n")
+
+            # Импортируем через SQL
+            cursor.execute(f"""
+                INSERT INTO PressureVNK (Dat, PressureVnk, InputData_ID)
+                SELECT * FROM [Text;DATABASE={temp_dir}].[pressure_data.txt]
+            """)
+            conn.commit()
+
+            # Очищаем временные файлы
+            try:
+                os.remove(schema_ini)
+                os.remove(data_file)
+                os.rmdir(temp_dir)
+            except:
+                pass
+
+            logging.info(f"Данные PressureVNK сохранены через text import для ID: {input_data_id}")
+
+        except Exception as e:
+            conn.rollback()
+            logging.error(f"Ошибка text import PressureVNK: {str(e)}")
             raise
 
     def get_last_pressure_vnk(self, input_data_id):
@@ -440,7 +518,7 @@ class AccessDatabase:
                            SELECT TOP 1 PressureVnk
                            FROM PressureVNK
                            WHERE InputData_ID = ?
-                           ORDER BY ID DESC
+                           ORDER BY Dat DESC
                            """, (input_data_id,))
 
             result = cursor.fetchone()
@@ -455,6 +533,10 @@ class AccessDatabase:
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
+
+            # Очищаем предыдущие данные
+            cursor.execute("DELETE FROM ModelKSD WHERE InputData_ID = ?", (input_data_id,))
+            conn.commit()
 
             inserted_count = 0
 
@@ -940,6 +1022,13 @@ class AccessDatabase:
     def calculate_pressure_values(self, input_data_id, pressure_last_point=None):
         """Рассчитывает значения для calculatedPressure"""
         try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Очищаем предыдущие расчеты
+            cursor.execute("DELETE FROM calculatedPressure WHERE InputData_ID = ?", (input_data_id,))
+            conn.commit()
+
             # Получаем необходимые данные
             vid_issledovaniya = self.get_vid_issledovaniya(input_data_id)
             pzab_vnk = None
@@ -1080,133 +1169,6 @@ class AccessDatabase:
             print(f"Ошибка получения параметра {param_name}: {e}")
             return None
 
-    def update_calculate_table_improved(self, input_data_id):
-        """Улучшенная версия обновления calculate"""
-        try:
-            import math
-
-            conn = self.get_connection()
-            cursor = conn.cursor()
-
-            # Получаем все необходимые параметры
-            params = {}
-            param_names = [
-                'P @ dt=0', 'Delta Q', 'h', 'k', 'вязкость', 'µгаза', 'Phi',
-                'Общая сжимаемость сt', 'Тип флюида'
-            ]
-
-            for param_name in param_names:
-                params[param_name] = self.get_calculated_parameter(input_data_id, param_name)
-
-            # Получаем данные из InputData
-            cursor.execute("""
-                           SELECT Obvodnennost, Vremya_issledovaniya
-                           FROM InputData
-                           WHERE ID = ?
-                           """, (input_data_id,))
-            input_data = cursor.fetchone()
-            obvodnennost, vremya_issledovaniya = input_data if input_data else (None, None)
-
-            # 1. P1_zab_vnk
-            p1_zab_vnk = params['P @ dt=0']
-
-            # 2. P2_zab_vnk - последнее значение из PressureVNK
-            cursor.execute("""
-                           SELECT TOP 1 PressureVnk
-                           FROM PressureVNK
-                           WHERE InputData_ID = ?
-                           ORDER BY ID DESC
-                           """, (input_data_id,))
-            p2_zab_vnk = cursor.fetchone()
-            p2_zab_vnk = p2_zab_vnk[0] if p2_zab_vnk else None
-
-            # 3. Pday - разница давлений за сутки
-            cursor.execute("""
-                           SELECT MAX(PressureVnk) - MIN(PressureVnk)
-                           FROM PressureVNK
-                           WHERE InputData_ID = ?
-                             AND Dat >= DATEADD('d', -1, (SELECT MAX(Dat) FROM PressureVNK WHERE InputData_ID = ?))
-                           """, (input_data_id, input_data_id))
-            pday = cursor.fetchone()
-            pday = pday[0] if pday else None
-
-            # 4. P_pl_vnk - значение из calculatedPressure
-            cursor.execute("""
-                           SELECT PplVnk
-                           FROM calculatedPressure
-                           WHERE InputData_ID = ?
-                           """, (input_data_id,))
-            p_pl_vnk = cursor.fetchone()
-            p_pl_vnk = p_pl_vnk[0] if p_pl_vnk else None
-
-            # 5. delta - разница с предыдущим исследованием (упрощенно)
-            delta = None  # Нужна дополнительная логика для предыдущих исследований
-
-            # 6. productivity - модуль отношения Delta Q к разнице давлений
-            cursor.execute("""
-                           SELECT Val
-                           FROM calculatedParameters
-                           WHERE InputData_ID = ?
-                             AND calcParam = 'Delta Q'
-                           """, (input_data_id,))
-            delta_q = cursor.fetchone()
-            delta_q = delta_q[0] if delta_q else None
-
-            productivity = abs(delta_q / (p1_zab_vnk - p_pl_vnk)) if delta_q and p1_zab_vnk and p_pl_vnk else None
-
-            # 7. Delta Q
-            delta_q_value = delta_q
-
-            # 8. Qoil = Delta Q*(1-Obvodnennost/100)*Vremya_issledovaniya/24
-            cursor.execute("""
-                           SELECT Obvodnennost, Vremya_issledovaniya
-                           FROM InputData
-                           WHERE ID = ?
-                           """, (input_data_id,))
-            input_data = cursor.fetchone()
-
-            qoil = None
-            if input_data and delta_q:
-                obvodnennost, vremya = input_data
-                qoil = delta_q * (1 - obvodnennost / 100) * vremya / 24
-
-            # 9. Kh/Mu
-            fluid_type = str(params['Тип флюида'] or '').lower()
-            kh_mu = None
-
-            if all(params.get(key) for key in ['h', 'k']):
-                if 'газ' in fluid_type and params['µгаза']:
-                    kh_mu = (params['h'] * 100 * params['k'] / 1000) / params['µгаза']
-                elif params['вязкость']:
-                    kh_mu = (params['h'] * 100 * params['k'] / 1000) / params['вязкость']
-
-            # 10. Rinv_Ppl1
-            rinv_ppl1 = None
-            if (vremya_issledovaniya and all(params.get(key) for key in ['k', 'Phi', 'Общая сжимаемость сt'])):
-                if 'газ' in fluid_type and params['µгаза']:
-                    rinv_ppl1 = 0.037 * math.sqrt(
-                        (params['k'] * vremya_issledovaniya) /
-                        (params['Phi'] * params['µгаза'] * params['Общая сжимаемость сt'])
-                    )
-                elif params['вязкость']:
-                    rinv_ppl1 = 0.037 * math.sqrt(
-                        (params['k'] * vremya_issledovaniya) /
-                        (params['Phi'] * params['вязкость'] * params['Общая сжимаемость сt'])
-                    )
-
-            # Вставляем данные
-            cursor.execute("""
-                           INSERT INTO calculate (P1_zab_vnk, P2_zab_vnk, Pday, P_pl_vnk, delta, productivity,
-                                                  Delta_Q, Qoil, Kh_Mu, Rinv_Ppl1, InputData_ID)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                           """, (p1_zab_vnk, p2_zab_vnk, pday, p_pl_vnk, None, None,
-                                 params['Delta Q'], None, kh_mu, rinv_ppl1, input_data_id))
-
-            conn.commit()
-
-        except Exception as e:
-            print(f"Ошибка обновления calculate: {e}")
-            raise
 
     def check_column_types(self, table_name):
         """Проверяет точные типы данных столбцов в таблице"""
@@ -1294,29 +1256,31 @@ class AccessDatabase:
             result = cursor.fetchone()
             pday = result[0] if result else None
 
-            # 4. P_pl_vnk - значение из calculatedPressure
-            cursor.execute("""
-                           SELECT PplVnk
-                           FROM calculatedPressure
-                           WHERE InputData_ID = ?
-                           """, (input_data_id,))
-            result = cursor.fetchone()
-            p_pl_vnk = result[0] if result else None
+            # 4. P_pl_vnk
+            p_pl_vnk = self.get_last_model_vnk_pressure(input_data_id)
 
             # 5. delta - разница с предыдущим исследованием
             delta = None
-            if p_pl_vnk:
-                cursor.execute("""
-                               SELECT TOP 1 p.PplVnk
-                               FROM InputData i
-                                        INNER JOIN prevData p ON i.ID = p.InputData_ID
-                               WHERE i.Skvazhina = (SELECT Skvazhina FROM InputData WHERE ID = ?)
-                                 AND i.ID != ?
-                               ORDER BY i.Data_issledovaniya DESC
-                               """, (input_data_id, input_data_id))
-                result = cursor.fetchone()
-                if result:
-                    delta = p_pl_vnk - result[0]
+            # if p_pl_vnk:
+            #     # Получаем текущую скважину
+            #     cursor.execute("SELECT Skvazhina FROM InputData WHERE ID = ?", (input_data_id,))
+            #     result = cursor.fetchone()
+            #     current_skvazhina = result[0] if result else None
+            #
+            #     if current_skvazhina:
+            #         # Ищем предыдущее исследование для этой скважины
+            #         cursor.execute("""
+            #                        SELECT TOP 1 p.PplVnk
+            #                        FROM InputData i
+            #                                 INNER JOIN prevData p ON i.ID = p.InputData_ID
+            #                        WHERE i.Skvazhina = ?
+            #                        ORDER BY i.Data_issledovaniya DESC
+            #                        """, (current_skvazhina,))
+            #
+            #         result = cursor.fetchone()
+            #         if result:
+            #             prev_ppl_vnk = result[0]
+            #             delta = p_pl_vnk - prev_ppl_vnk
 
             # 6. productivity
             delta_q = self.get_calculated_parameter(input_data_id, 'Delta Q')
@@ -1365,7 +1329,7 @@ class AccessDatabase:
                 elif viscosity and ct:
                     rinv_ppl1 = 0.037 * math.sqrt((k * vremya) / (phi * viscosity * ct))
 
-            # Вставляем запись
+            # Вставляем данные в таблицу calculate
             cursor.execute("""
                            INSERT INTO calculate
                            (P1_zab_vnk, P2_zab_vnk, Pday, P_pl_vnk, delta, productivity,
@@ -1382,35 +1346,290 @@ class AccessDatabase:
             raise
 
     def insert_prev_data(self, data_dict):
-        """Вставляет данные в таблицу prevData"""
+        """Вставляет данные в таблицу prevData с правильными типами"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
+            cursor.execute("DELETE FROM prevData WHERE InputData_ID = ?", (data_dict['InputData_ID'],))
+            conn.commit()
+
+            # Преобразуем данные согласно структуре таблицы
             sql = """
-                  INSERT INTO prevData (PplVnk, PzabVnk, DataRes, Water, Q, Kprod, Smeh, Heff, Kgidr, InputData_ID)
+                  INSERT INTO prevData
+                  (PplVnk, PzabVnk, DataRes, Water, Q, Kprod, Smeh, Heff, Kgidr, InputData_ID)
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
                   """
 
-            cursor.execute(sql, (
-                data_dict.get('PplVnk'),
-                data_dict.get('PzabVnk'),
-                data_dict.get('DataRes'),
-                data_dict.get('Water'),
-                data_dict.get('Q'),
-                data_dict.get('Kprod'),
-                data_dict.get('Smeh'),
-                data_dict.get('Heff'),
-                data_dict.get('Kgidr'),
-                data_dict.get('InputData_ID')
-            ))
+            # Функция для извлечения числа из строки (для поля Smeh)
+            def extract_number(value):
+                if value is None:
+                    return None
+                if isinstance(value, (int, float)):
+                    return float(value)
+                if isinstance(value, str):
+                    # Ищем число в строке (например, из "/-8.24" извлекаем -8.24)
+                    import re
+                    # Ищем числа с дробной частью и знаками
+                    match = re.search(r'[-+]?\d*\.?\d+', value.replace(',', '.'))
+                    if match:
+                        try:
+                            return float(match.group())
+                        except ValueError:
+                            return None
+                    return None
+                return None
 
+            # Подготавливаем параметры с правильными типами
+            params = (
+                float(data_dict['PplVnk']) if data_dict['PplVnk'] is not None else None,
+                float(data_dict['PzabVnk']) if data_dict['PzabVnk'] is not None else None,
+                data_dict['DataRes'],  # Дата как есть (должна быть datetime)
+                float(data_dict['Water']) if data_dict['Water'] is not None else None,
+                float(data_dict['Q']) if data_dict['Q'] is not None else None,
+                float(data_dict['Kprod']) if data_dict['Kprod'] is not None else None,
+                extract_number(data_dict['Smeh']),  # Извлекаем число из строки
+                float(data_dict['Heff']) if data_dict['Heff'] is not None else None,
+                float(data_dict['Kgidr']) if data_dict['Kgidr'] is not None else None,
+                int(data_dict['InputData_ID'])
+            )
+
+            # Отладочная информация
+            logging.info("Параметры для вставки в prevData:")
+            for i, param in enumerate(params):
+                logging.info(f"  Параметр {i}: {param} (type: {type(param).__name__})")
+
+            cursor.execute(sql, params)
             conn.commit()
-            logging.info(f"Данные предыдущего исследования сохранены для ID: {data_dict.get('InputData_ID')}")
+            logging.info(f"Данные предыдущего исследования сохранены для ID: {data_dict['InputData_ID']}")
 
         except Exception as e:
             logging.error(f"Ошибка вставки в prevData: {str(e)}")
             raise
 
+    def import_previous_research_data(self, input_data_id, field_name, well_name):
+        """Импортирует данные предыдущего исследования из Excel файла"""
+        try:
+            from GUI_Claudi_ITC import table_prev_path
+            logging.info(f"Начинаем импорт для field: {field_name}, well: {well_name}")
+
+            # Формируем путь к файлу
+            field_name_clean = field_name.replace(" ", "_").capitalize()
+            previous_data_file = f'Итоговая таблица_{field_name_clean}.xlsx'
+            previous_data_path = table_prev_path(previous_data_file)
+
+            logging.info(f"Ищем файл: {previous_data_path}")
+
+            if not os.path.exists(previous_data_path):
+                logging.warning(f"Файл предыдущих данных не найден: {previous_data_path}")
+                return False
+
+            # Читаем Excel файл
+            logging.info("Читаем Excel файл...")
+            final_table_df = pd.read_excel(previous_data_path, skiprows=11)
+
+            well_num = well_name.split()[0] if well_name else ''
+            logging.info(f"Ищем данные для скважины: {well_num}")
+
+            # Проверяем наличие колонки 'Скважина'
+            if 'Скважина' not in final_table_df.columns:
+                logging.error("Колонка 'Скважина' не найдена в файле")
+                return False
+
+            # Фильтруем данные по номеру скважины
+            final_table_df['Скважина'] = final_table_df['Скважина'].astype(str).str.strip()
+            final_table_df = final_table_df.dropna(subset=['Скважина'])
+            filtered_data = final_table_df[final_table_df['Скважина'] == well_num]
+
+            logging.info(f"Найдено записей для скважины {well_num}: {len(filtered_data)}")
+
+            if filtered_data.empty:
+                logging.warning(f"Не найдено данных для скважины {well_num}")
+                return False
+
+            # Обработка данных из файла
+            pd.set_option('mode.use_inf_as_na', True)
+
+            # Проверяем наличие колонки 'Дата испытания'
+            if 'Дата испытания' not in filtered_data.columns:
+                logging.error("Колонка 'Дата испытания' не найдена")
+                return False
+
+            filtered_data.loc[:, 'Дата испытания'] = filtered_data['Дата испытания'].apply(
+                lambda x: datetime.strptime(x, "%d.%m.%Y") if isinstance(x, str) else x
+            )
+
+            latest_entry = filtered_data.loc[filtered_data['Дата испытания'].idxmax()]
+
+            # Функция для безопасного преобразования значений
+            def safe_convert(value, default=None):
+                if pd.isna(value) or value is None:
+                    return default
+                try:
+                    if isinstance(value, (int, float)):
+                        return float(value)
+                    elif isinstance(value, str):
+                        # Пробуем преобразовать строку в число
+                        return float(value.replace(',', '.'))
+                    else:
+                        return default
+                except (ValueError, TypeError):
+                    return default
+
+            # Сохраняем данные в таблицу prevData с правильными типами
+            prev_data = {
+                'PplVnk': safe_convert(latest_entry.get('Рпл  на ВНК, кгс/см2')),
+                'PzabVnk': safe_convert(latest_entry.get('Рзаб  на ВНК, кгс/см2')),
+                'DataRes': latest_entry.get('Дата испытания'),
+                'Water': safe_convert(latest_entry.get('% воды')),
+                'Q': safe_convert(latest_entry.get('Qж/Qг, м3/сут   ')),
+                'Kprod': safe_convert(latest_entry.get('Кпрод. м3/сут*кгс/см2')),
+                'Smeh': latest_entry.get('Скин-фактор механич./интегр.'),  # Теперь число!
+                'Heff': safe_convert(latest_entry.get('Нэф., м. ')),
+                'Kgidr': safe_convert(latest_entry.get('Кгидр., Д*см/сПз')),
+                'InputData_ID': input_data_id
+            }
+
+            logging.info(f"Данные для сохранения: {prev_data}")
+
+            # Сохраняем в базу данных
+            self.insert_prev_data(prev_data)
+            logging.info("Данные предыдущего исследования сохранены в базу")
+
+            return True
+
+        except Exception as e:
+            logging.error(f"Ошибка импорта данных предыдущего исследования: {str(e)}", exc_info=True)
+            return False
+
+    # def convert_date_for_access(date_value):
+    #     """Конвертирует дату в формат, понятный Access"""
+    #     if isinstance(date_value, datetime):
+    #         return date_value
+    #     elif isinstance(date_value, str):
+    #         try:
+    #             return datetime.strptime(date_value, "%d.%m.%Y")
+    #         except ValueError:
+    #             return None
+    #     elif isinstance(date_value, pd.Timestamp):
+    #         return date_value.to_pydatetime()
+    #     return None
+
+    def get_previous_research_data(self, input_data_id):
+        """Получает данные предыдущего исследования для отчета"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                           SELECT PplVnk,
+                                  PzabVnk,
+                                  DataRes,
+                                  Water,
+                                  Q,
+                                  Kprod,
+                                  Smeh,
+                                  Heff,
+                                  Kgidr
+                           FROM prevData
+                           WHERE InputData_ID = ?
+                           """, (input_data_id,))
+
+            result = cursor.fetchone()
+            if result:
+                return {
+                    'Рпл  на ВНК, кгс/см2': result[0],
+                    'Рзаб  на ВНК, кгс/см2': result[1],
+                    'Дата испытания': result[2].strftime("%d.%m.%Y") if result[2] else '',
+                    '% воды': result[3],
+                    'Qж/Qг, м3/сут': result[4],
+                    'Кпрод. м3/сут*кгс/см2': result[5],
+                    'Скин-фактор механич./интегр.': result[6],
+                    'Нэф., м.': result[7],
+                    'Кгидр., Д*см/сПз': result[8]
+                }
+            return {}
+
+        except Exception as e:
+            logging.error(f"Ошибка получения данных предыдущего исследования: {str(e)}")
+            return {}
+
+    def get_field_name(self, input_data_id):
+        """Получает название месторождения по ID записи"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT Localoredenie FROM InputData WHERE ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+            return result[0] if result else None
+        except Exception as e:
+            logging.error(f"Ошибка получения названия месторождения: {str(e)}")
+            return None
+
+    def get_well_name(self, input_data_id):
+        """Получает название скважины по ID записи"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT Skvazhina FROM InputData WHERE ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+            return result[0] if result else None
+        except Exception as e:
+            logging.error(f"Ошибка получения названия скважины: {str(e)}")
+            return None
+
+    def check_prevdata_structure(self):
+        """Проверяет реальную структуру таблицы prevData"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Получаем информацию о колонках
+            cursor.execute("SELECT TOP 1 * FROM prevData")
+            description = cursor.description
+
+            print("=== СТРУКТУРА TAБЛИЦЫ prevData ===")
+            for column in description:
+                col_name = column[0]
+                col_type = column[1]  # Код типа данных
+                print(f"{col_name}: тип кода {col_type}")
+
+        except Exception as e:
+            print(f"Ошибка проверки структуры: {e}")
+
+    def clear_related_data(self, input_data_id):
+        """Очищает все связанные данные для указанного InputData_ID"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Список таблиц для очистки
+            tables = [
+                'success',
+                'researchClass',
+                'pressureLastPoint',
+                'estimatedTime',
+                'density',
+                'amendments',
+                'prevData'  # Добавляем prevData
+            ]
+
+            for table in tables:
+                try:
+                    cursor.execute(f"DELETE FROM {table} WHERE InputData_ID = ?", (input_data_id,))
+                    logging.info(f"Очищена таблица {table} для ID: {input_data_id}")
+                except Exception as e:
+                    logging.warning(f"Не удалось очистить {table}: {str(e)}")
+
+            conn.commit()
+
+        except Exception as e:
+            logging.error(f"Ошибка очистки связанных данных: {str(e)}")
+            raise
+
+
 # db = AccessDatabase()
 # db.add_sort_order_to_model_vnk()
+# db.get_last_pressure_vnk('61')
+# db.check_prevdata_structure()
+# db.import_previous_research_data('72', 'Чаяндинское', '1057G')
