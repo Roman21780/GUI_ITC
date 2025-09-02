@@ -89,7 +89,7 @@ class AccessDatabase:
         cursor = conn.cursor()
         tables = [
             'dampingTable', 'calculatedPressure', 'calculatedParameters',
-            'amendments', 'InputData',
+            'amendments', 'InputData', 'prevData',
             'researchClass', 'success', 'density', 'estimatedTime',
             'ModelVNK', 'PressureVNK', 'pressureLastPoint', 'TextParameters',
             'ModelKSD', 'calculate'
