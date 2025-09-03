@@ -2,10 +2,11 @@ import pyodbc
 import os
 from utils import logger, logging
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from tkinter import messagebox
 import math
 import sys
+
 
 class AccessDatabase:
     def __init__(self, db_path='research_data.accdb'):
@@ -676,37 +677,112 @@ class AccessDatabase:
             raise
 
     def insert_amendments(self, input_data_id, amendments_dict):
-        """Вставляет поправки в таблицу amendments"""
+        """Сохраняет поправки в соответствующие таблицы"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Проверяем какие поля действительно есть в таблице
-            existing_fields = self.get_table_columns('amendments')
+            # Разделяем поправки по таблицам
+            amendments_1 = {}  # Для amendments (пласт 1)
+            amendments_2 = {}  # Для amendments2 (пласт 2)
+            amendments_3 = {}  # Для amendments3 (пласт 3)
+            amendments_4 = {}  # Для amendments4 (пласт 4)
 
-            # Вставляем только существующие поля
             for field_name, value in amendments_dict.items():
-                if field_name in existing_fields and value is not None:
-                    # Проверяем, есть ли уже запись для этого InputData_ID
-                    check_sql = f"SELECT COUNT(*) FROM amendments WHERE InputData_ID = ? AND {field_name} IS NOT NULL"
-                    cursor.execute(check_sql, (input_data_id,))
-                    exists = cursor.fetchone()[0] > 0
+                if field_name.endswith('2'):
+                    # Пласт 2 -> amendments2
+                    clean_name = field_name.replace('2', '')
+                    amendments_2[clean_name] = value
+                elif field_name.endswith('3'):
+                    # Пласт 3 -> amendments3
+                    clean_name = field_name.replace('3', '')
+                    amendments_3[clean_name] = value
+                elif field_name.endswith('4'):
+                    # Пласт 4 -> amendments4
+                    clean_name = field_name.replace('4', '')
+                    amendments_4[clean_name] = value
+                else:
+                    # Пласт 1 -> amendments
+                    amendments_1[field_name] = value
 
-                    if exists:
-                        # Обновляем существующую запись
-                        update_sql = f"UPDATE amendments SET {field_name} = ? WHERE InputData_ID = ?"
-                        cursor.execute(update_sql, (value, input_data_id))
-                    else:
-                        # Вставляем новую запись
-                        insert_sql = f"INSERT INTO amendments (InputData_ID, {field_name}) VALUES (?, ?)"
-                        cursor.execute(insert_sql, (input_data_id, value))
-
-            conn.commit()
-            logging.info(f"Поправки сохранены для записи ID: {input_data_id}")
+            # Сохраняем в соответствующие таблицы
+            if amendments_1:
+                self._save_to_amendments_table('amendments', input_data_id, amendments_1)
+            if amendments_2:
+                self._save_to_amendments_table('amendments2', input_data_id, amendments_2)
+            if amendments_3:
+                self._save_to_amendments_table('amendments3', input_data_id, amendments_3)
+            if amendments_4:
+                self._save_to_amendments_table('amendments4', input_data_id, amendments_4)
 
         except Exception as e:
-            logging.error(f"Ошибка вставки поправок: {str(e)}")
+            logging.error(f"Ошибка сохранения поправок: {str(e)}")
             raise
+
+    def _save_to_amendments_table(self, table_name, input_data_id, amendments_data):
+        """Сохраняет поправки в указанную таблицу"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Очищаем старые данные
+            cursor.execute(f"DELETE FROM {table_name} WHERE InputData_ID = ?", (input_data_id,))
+
+            # Формируем SQL запрос
+            fields = ['InputData_ID']
+            values = [input_data_id]
+            placeholders = ['?']
+
+            for field_name, value in amendments_data.items():
+                fields.append(field_name)
+                values.append(value)
+                placeholders.append('?')
+
+            sql = f"INSERT INTO {table_name} ({', '.join(fields)}) VALUES ({', '.join(placeholders)})"
+            cursor.execute(sql, values)
+            conn.commit()
+
+            logging.info(f"Поправки сохранены в {table_name} для ID: {input_data_id}")
+
+        except Exception as e:
+            logging.error(f"Ошибка сохранения в {table_name}: {str(e)}")
+            raise
+
+    def get_all_amendments(self, input_data_id):
+        """Получает все поправки из всех таблиц"""
+        amendments = {}
+
+        # Загружаем из всех таблиц
+        tables = ['amendments', 'amendments2', 'amendments3', 'amendments4']
+        suffixes = ['', '2', '3', '4']
+
+        for table, suffix in zip(tables, suffixes):
+            table_data = self.get_amendments_from_table(input_data_id, table)
+            for key, value in table_data.items():
+                amendments[key + suffix] = value
+
+        return amendments
+
+    def get_amendments_from_table(self, input_data_id, table_name):
+        """Получает поправки из конкретной таблицы"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(f"SELECT * FROM {table_name} WHERE InputData_ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+
+            if result:
+                # Получаем описание таблицы для имен колонок
+                cursor.execute(f"SELECT * FROM {table_name} WHERE 1=0")
+                columns = [column[0] for column in cursor.description]
+
+                return {col: val for col, val in zip(columns, result) if col != 'InputData_ID'}
+            return {}
+
+        except Exception as e:
+            logging.error(f"Ошибка получения данных из {table_name}: {str(e)}")
+            return {}
 
     def get_parameters(self, input_data_id):
         """Получает параметры исследования для указанной записи"""
@@ -742,6 +818,278 @@ class AccessDatabase:
             logging.error(f"Ошибка получения поправок: {str(e)}")
             return {}
 
+    def get_amendments2(self, input_data_id):
+        """Получает поправки из таблицы amendments2"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT * FROM amendments2 WHERE InputData_ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+
+            if result:
+                return {
+                    'amendVnkPpl2': result[0],
+                    'amendVdpPpl2': result[1],
+                    'amendGnkPpl2': result[2],
+                    'amendVnkPzab2': result[3],
+                    'amendVdpPzab2': result[4],
+                    'amendGnkPzab2': result[5]
+                }
+            return {}
+
+        except Exception as e:
+            logging.error(f"Ошибка получения amendments2: {str(e)}")
+            return {}
+
+    def get_amendments3(self, input_data_id):
+        """Получает поправки из таблицы amendments3"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT * FROM amendments3 WHERE InputData_ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+
+            if result:
+                return {
+                    'amendVnkPpl3': result[0],
+                    'amendVdpPpl3': result[1],
+                    'amendGnkPpl3': result[2],
+                    'amendVnkPzab3': result[3],
+                    'amendVdpPzab3': result[4],
+                    'amendGnkPzab3': result[5]
+                }
+            return {}
+
+        except Exception as e:
+            logging.error(f"Ошибка получения amendments3: {str(e)}")
+            return {}
+
+    def get_amendments4(self, input_data_id):
+        """Получает поправки из таблицы amendments4"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT * FROM amendments4 WHERE InputData_ID = ?", (input_data_id,))
+            result = cursor.fetchone()
+
+            if result:
+                return {
+                    'amendVnkPpl4': result[0],
+                    'amendVdpPpl4': result[1],
+                    'amendGnkPpl4': result[2],
+                    'amendVnkPzab4': result[3],
+                    'amendVdpPzab4': result[4],
+                    'amendGnkPzab4': result[5]
+                }
+            return {}
+
+        except Exception as e:
+            logging.error(f"Ошибка получения amendments4: {str(e)}")
+            return {}
+
+    def update_damping_table_headers(self, input_data_id):
+        """Обновляет заголовки в dampingTable с именами пластов"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Получаем данные из InputData
+            cursor.execute("SELECT Plast FROM InputData WHERE ID = ?", (input_data_id,))
+            plast_result = cursor.fetchone()
+            plast_value = plast_result[0] if plast_result else ""
+
+            # Разделяем пласты по запятым
+            plasts = [p.strip() for p in str(plast_value).split(',')] if plast_value else []
+
+            # Создаем временную таблицу с правильными заголовками
+            cursor.execute("SELECT * FROM dampingTable WHERE 1=0")
+            columns = [column[0] for column in cursor.description]
+
+            # Заменяем номера пластов на реальные имена
+            new_columns = columns[:2]  # Дата, Длительность
+
+            for i, plast in enumerate(plasts[:4]):
+                plast_num = i + 1
+                new_columns.extend([
+                    f'Рпл на ВНК пласта {plast}, кгс/см2',
+                    f'Рпл на ВДП пласта {plast}, кгс/см2'
+                ])
+
+            # Создаем временную таблицу
+            temp_table_sql = "CREATE TABLE dampingTable_temp ("
+            temp_table_sql += "[Дата] DATETIME, [Длительность, час] FLOAT, "
+
+            for i, plast in enumerate(plasts[:4]):
+                temp_table_sql += f"[Рпл на ВНК пласта {plast}, кгс/см2] FLOAT, "
+                temp_table_sql += f"[Рпл на ВДП пласта {plast}, кгс/см2] FLOAT, "
+
+            temp_table_sql = temp_table_sql.rstrip(', ') + ")"
+
+            cursor.execute("DROP TABLE IF EXISTS dampingTable_temp")
+            cursor.execute(temp_table_sql)
+
+            # Копируем данные
+            if plasts:
+                insert_sql = "INSERT INTO dampingTable_temp SELECT * FROM dampingTable"
+                cursor.execute(insert_sql)
+
+            # Заменяем оригинальную таблицу
+            cursor.execute("DROP TABLE dampingTable")
+            cursor.execute("ALTER TABLE dampingTable_temp RENAME TO dampingTable")
+
+            conn.commit()
+            logging.info("Заголовки dampingTable обновлены с именами пластов")
+
+        except Exception as e:
+            logging.error(f"Ошибка обновления заголовков: {str(e)}")
+            raise
+
+    def create_and_fill_damping_table(self, input_data_id):
+        """Создает и заполняет таблицу dampingTable с фиксированными длительностями"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Очищаем таблицу перед заполнением
+            cursor.execute("DELETE FROM dampingTable")
+
+            # Получаем данные из InputData
+            cursor.execute("SELECT Plast FROM InputData WHERE ID = ?", (input_data_id,))
+            plast_result = cursor.fetchone()
+            plast_value = plast_result[0] if plast_result else ""
+
+            # Разделяем пласты по запятым
+            plasts = [p.strip() for p in str(plast_value).split(',')] if plast_value else []
+
+            # Получаем поправки из всех таблиц
+            amendments = self.get_amendments(input_data_id) or {}
+            amendments2 = self.get_amendments2(input_data_id) or {}
+            amendments3 = self.get_amendments3(input_data_id) or {}
+            amendments4 = self.get_amendments4(input_data_id) or {}
+
+            # Получаем данные из ModelVNK
+            cursor.execute("""
+                           SELECT Dat, PressureVnkModel
+                           FROM ModelVNK
+                           WHERE InputData_ID = ?
+                             AND PressureVnkModel IS NOT NULL
+                           ORDER BY Dat
+                           """, (input_data_id,))
+            model_data = cursor.fetchall()
+
+            if not model_data:
+                logging.warning("Нет данных в ModelVNK для заполнения dampingTable")
+                return
+
+            # Фиксированные длительности (в часах)
+            durations = [0, 24, 48, 72, 96, 120, 144, 168, 192, 216, 240, 480, 600, 720]
+
+            # Создаем данные для таблицы
+            damping_data = []
+            start_date = datetime.now().date()
+
+            for i, duration in enumerate(durations):
+                row_data = {
+                    'Дата': start_date + timedelta(hours=duration),
+                    'Длительность, час': duration
+                }
+
+                # Находим соответствующее давление из ModelVNK для этой длительности
+                # Ищем ближайшее значение по времени
+                target_time = timedelta(hours=duration)
+                closest_pressure = None
+
+                for dat, pressure in model_data:
+                    if isinstance(dat, datetime):
+                        time_diff = abs(
+                            (dat - datetime.combine(start_date, time.min)).total_seconds() / 3600 - duration)
+                        if closest_pressure is None or time_diff < closest_pressure[0]:
+                            closest_pressure = (time_diff, pressure)
+
+                if closest_pressure:
+                    base_pressure = closest_pressure[1]
+                else:
+                    base_pressure = model_data[0][1]  # Первое значение по умолчанию
+
+                # Базовое давление из ModelVNK для пласта 1
+                base_pressure_vnk = base_pressure
+
+                # Расчет для пласта 1
+                vnk1 = base_pressure_vnk
+                vdp1 = vnk1 - (amendments.get('amendVnkPpl', 0) - amendments.get('amendVdpPpl', 0))
+
+                row_data['Рпл на ВНК пласта 1, кгс/см2'] = vnk1
+                row_data['Рпл на ВДП пласта 1, кгс/см2'] = vdp1
+
+                # Расчет для пласта 2 (если есть)
+                if len(plasts) >= 2:
+                    vnk2 = vnk1 + (amendments2.get('amendVnkPpl2', 0) - amendments.get('amendVnkPpl', 0))
+                    vdp2 = vdp1 + (amendments2.get('amendVdpPpl2', 0) - amendments.get('amendVdpPpl', 0))
+
+                    row_data['Рпл на ВНК пласта 2, кгс/см2'] = vnk2
+                    row_data['Рпл на ВДП пласта 2, кгс/см2'] = vdp2
+
+                # Расчет для пласта 3 (если есть)
+                if len(plasts) >= 3:
+                    vnk3 = vnk1 + (amendments3.get('amendVnkPpl3', 0) - amendments.get('amendVnkPpl', 0))
+                    vdp3 = vdp1 + (amendments3.get('amendVdpPpl3', 0) - amendments.get('amendVdpPpl', 0))
+
+                    row_data['Рпл на ВНК пласта 3, кгс/см2'] = vnk3
+                    row_data['Рпл на ВДП пласта 3, кгс/см2'] = vdp3
+
+                # Расчет для пласта 4 (если есть)
+                if len(plasts) >= 4:
+                    vnk4 = vnk1 + (amendments4.get('amendVnkPpl4', 0) - amendments.get('amendVnkPpl', 0))
+                    vdp4 = vdp1 + (amendments4.get('amendVdpPpl4', 0) - amendments.get('amendVdpPpl', 0))
+
+                    row_data['Рпл на ВНК пласта 4, кгс/см2'] = vnk4
+                    row_data['Рпл на ВДП пласта 4, кгс/см2'] = vdp4
+
+                damping_data.append(row_data)
+
+            # Вставляем данные в таблицу
+            for row in damping_data:
+                sql = """
+                      INSERT INTO dampingTable
+                      (Дата, Длительность, час,
+                       Рпл на ВНК пласта 1, кгс/см2, Рпл на ВДП пласта 1, кгс/см2,
+                       Рпл на ВНК пласта 2, кгс/см2, Рпл на ВДП пласта 2, кгс/см2,
+                       Рпл на ВНК пласта 3, кгс/см2, Рпл на ВДП пласта 3, кгс/см2,
+                       Рпл на ВНК пласта 4, кгс/см2, Рпл на ВДП пласта 4, кгс/см2)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                      """
+
+                params = (
+                    row['Дата'],
+                    row['Длительность, час'],
+                    row.get('Рпл на ВНК пласта 1, кгс/см2'),
+                    row.get('Рпл на ВДП пласта 1, кгс/см2'),
+                    row.get('Рпл на ВНК пласта 2, кгс/см2'),
+                    row.get('Рпл на ВДП пласта 2, кгс/см2'),
+                    row.get('Рпл на ВНК пласта 3, кгс/см2'),
+                    row.get('Рпл на ВДП пласта 3, кгс/см2'),
+                    row.get('Рпл на ВНК пласта 4, кгс/см2'),
+                    row.get('Рпл на ВДП пласта 4, кгс/см2')
+                )
+
+                cursor.execute(sql, params)
+
+            conn.commit()
+            logging.info(f"Таблица dampingTable заполнена для ID: {input_data_id}")
+
+            # Проверяем результат
+            cursor.execute("SELECT Дата, Длительность, час FROM dampingTable ORDER BY Длительность, час")
+            results = cursor.fetchall()
+            logging.info(f"Создано записей: {len(results)}")
+            for date, duration in results:
+                logging.info(f"Дата: {date}, Длительность: {duration} часов")
+
+        except Exception as e:
+            logging.error(f"Ошибка заполнения dampingTable: {str(e)}")
+            raise
 
     @staticmethod
     def convert_parameter_value(self, value):
@@ -1625,6 +1973,40 @@ class AccessDatabase:
 
         except Exception as e:
             logging.error(f"Ошибка очистки связанных данных: {str(e)}")
+            raise
+
+    def create_damping_table_structure(self):
+        """Создает структуру таблицы dampingTable с поддержкой до 4 пластов"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+
+            # Проверяем, существует ли таблица
+            cursor.execute("SELECT COUNT(*) FROM MSysObjects WHERE Name='dampingTable' AND Type=1")
+            exists = cursor.fetchone()[0] > 0
+
+            if not exists:
+                # Создаем таблицу
+                sql = """
+                    CREATE TABLE dampingTable (
+                        [Дата] DATETIME,
+                        [Длительность, час] FLOAT,
+                        [Рпл на ВНК пласта 1, кгс/см2] FLOAT,
+                        [Рпл на ВДП пласта 1, кгс/см2] FLOAT,
+                        [Рпл на ВНК пласта 2, кгс/см2] FLOAT,
+                        [Рпл на ВДП пласта 2, кгс/см2] FLOAT,
+                        [Рпл на ВНК пласта 3, кгс/см2] FLOAT,
+                        [Рпл на ВДП пласта 3, кгс/см2] FLOAT,
+                        [Рпл на ВНК пласта 4, кгс/см2] FLOAT,
+                        [Рпл на ВДП пласта 4, кгс/см2] FLOAT
+                    )      
+                """
+                cursor.execute(sql)
+                conn.commit()
+                logging.info("Таблица dampingTable создана")
+
+        except Exception as e:
+            logging.error(f"Ошибка создания dampingTable: {str(e)}")
             raise
 
 

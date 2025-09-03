@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import pyodbc
+import self
+
 from db_access import AccessDatabase
 
 import win32com.client
@@ -33,659 +35,6 @@ from docx.shared import Inches
 import locale
 
 locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
-
-
-def format_units(text):
-    """Форматирует единицы измерения"""
-    return (
-        text.replace("г/см3", "г/см³")
-            .replace("кгс/см2", "кгс/см²")
-            .replace("м2", "м²")
-            .replace("м3", "м³")
-    )
-
-
-def superscript(number):
-    """Преобразует число в надстрочный формат"""
-    superscript_map = {
-        "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
-        "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻"
-    }
-    return "".join(superscript_map.get(digit, "") for digit in str(number))
-
-
-def calculate_r_difference(workbook_path, sheet_name='current'):
-    """
-    Находит разницу между последним значением в столбце R и значением за сутки до последней даты.
-
-    :param workbook_path: путь к файлу Excel
-    :param sheet_name: имя листа (по умолчанию 'current')
-    :return: разница значений или None в случае ошибки
-    """
-    import pandas as pd
-    from datetime import datetime, timedelta
-    import logging
-
-    # Настройка логирования
-    logging.basicConfig(level=logging.INFO)
-
-    try:
-        # Читаем данные из Excel
-        df = pd.read_excel(workbook_path, sheet_name=sheet_name, header=None)
-
-        # Проверяем значение в ячейке B12
-        b12_value = df.iloc[11, 1]  # Индексация с 0: строка 12, столбец B
-        if isinstance(b12_value, (int, float)) and b12_value < 30:
-            logging.info("Значение в ячейке B12 меньше 30. Возвращаем None.")
-            return None
-
-        # Получаем столбцы Q и R (индексация с 0, Q=16, R=17)
-        column_q = df.iloc[:, 16]  # Столбец Q с датами
-        column_r = df.iloc[:, 17]  # Столбец R со значениями
-
-        # 1. Находим последнее значение в столбце R
-        last_r_value = column_r.dropna().iloc[-1]
-
-        # 2. Находим последнюю дату в столбце Q
-        last_date_str = column_q.dropna().iloc[-1]
-
-        # Преобразуем строку даты в datetime объект
-        try:
-            last_date = datetime.strptime(str(last_date_str), "%d.%m.%Y %H:%M:%S")
-        except ValueError:
-            try:
-                last_date = datetime.strptime(str(last_date_str), "%d.%m.%Y")
-            except ValueError:
-                logging.error(f"Невозможно преобразовать дату: {last_date_str}")
-                return None
-
-        # Вычитаем ровно одни сутки
-        previous_date = last_date - timedelta(days=1)
-
-        # Находим значение в столбце R для даты (previous_date)
-        previous_r_value = None
-        time_tolerance = timedelta(minutes=60)  # допустимая погрешность во времени
-
-        for i in range(len(column_q)):
-            current_date_str = str(column_q.iloc[i])
-            if not current_date_str or pd.isna(current_date_str):
-                continue
-
-            # Пробуем разные форматы даты
-            try:
-                current_date = datetime.strptime(current_date_str, "%d.%m.%Y %H:%M:%S")
-            except ValueError:
-                try:
-                    current_date = datetime.strptime(current_date_str, "%d.%m.%Y")
-                except ValueError:
-                    logging.warning(f"Невозможно преобразовать дату: {current_date_str}")
-                    continue
-
-            # Ищем значение, которое отличается ровно на 1 день (± допустимую погрешность)
-            if (last_date - current_date >= timedelta(days=1) - time_tolerance and
-                    last_date - current_date <= timedelta(days=1) + time_tolerance):
-                previous_r_value = column_r.iloc[i]
-                break
-
-        if previous_r_value is None:
-            logging.warning("Не найдено значение за сутки до последней даты или длительность менее 24ч")
-            return None
-
-        # 4. Вычисляем разницу
-        difference = last_r_value - previous_r_value
-        logging.info(f"Разница значений: {difference} (последнее: {last_r_value}, за сутки до: {previous_r_value})")
-
-        return difference
-
-    except Exception as e:
-        logging.warning(f"Ошибка при расчете разницы давления за сутки: {str(e)}")
-        return None
-
-
-def clean_text(text):
-    """
-    Удаляет суррогатные символы из текста.
-    """
-    if isinstance(text, str):
-        return text.encode('utf-8', errors='ignore').decode('utf-8')
-    return text
-
-
-def table_prev_path(filename):
-    """Путь к файлам в папке table_prev"""
-    if hasattr(sys, '_MEIPASS'):
-        base_path = os.path.normpath(sys._MEIPASS)
-    else:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, "table_prev", filename)
-
-
-def templates_path(filename):
-    """Путь к файлам в папке templates"""
-    if hasattr(sys, '_MEIPASS'):
-        base_path = os.path.normpath(sys._MEIPASS)
-    else:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, "templates", filename)
-
-def resource_path(relative_path):
-    """
-    Возвращает путь к ресурсу, учитывая работу через PyInstaller.
-    """
-    if hasattr(sys, '_MEIPASS'):
-        base_path = os.path.normpath(sys._MEIPASS)
-    else:
-        # base_path = os.path.dirname(os.path.abspath(__file__))
-        base_path = os.path.abspath(".")
-    full_path = os.path.join(base_path, relative_path)
-    print(f"Resource path: {full_path}")  # Логирование пути
-    return full_path
-
-
-def set_font_size(paragraph_or_run, size):
-    """Устанавливает размер шрифта для параграфа или отдельного run"""
-    if hasattr(paragraph_or_run, 'runs'):
-        # Это Paragraph - применяем ко всем runs
-        for run in paragraph_or_run.runs:
-            run.font.size = Pt(size)
-    else:
-        # Это Run - применяем непосредственно
-        paragraph_or_run.font.size = Pt(size)
-
-
-# Загрузка текстовых шаблонов
-with open(resource_path('text_templates.json'), 'r', encoding='utf-8') as f:
-    TEXT_TEMPLATES = json.load(f)
-
-
-# Функция вставки diagnostic_text на место метки {{diagnostic_text}}
-def insert_diagnostic_text(doc, diagnostic_text):
-    """Вставляет диагностический текст на место метки {{diagnostic_text}}"""
-    # Получаем текст из шаблонов
-    diagnostic_content = get_nested_value(TEXT_TEMPLATES, diagnostic_text.split('.'))
-
-    # Ищем метку в параграфах
-    for paragraph in doc.paragraphs:
-        if "{{diagnostic_text}}" in paragraph.text:
-            for run in paragraph.runs:
-                if "{{diagnostic_text}}" in run.text:
-                    run.text = run.text.replace("{{diagnostic_text}}", diagnostic_content)
-                    break
-            break
-
-
-# Вспомогательная функция для получения вложенных значений из словаря
-def get_nested_value(dictionary, keys):
-    for key in keys:
-        dictionary = dictionary[key]
-    return dictionary
-
-
-# ищем таблицу 'Протокол результатов исследования'
-def find_results_table(doc):
-    """
-    Находит таблицу 'Протокол результатов исследования' по тексту перед ней
-    Возвращает таблицу или None если не найдена
-    """
-    # Ищем параграф с заголовком
-    for i, paragraph in enumerate(doc.paragraphs):
-        if "Протокол результатов исследования" in paragraph.text:
-            # Ищем следующую после параграфа таблицу
-            next_element = paragraph._element.getnext()
-
-            while next_element is not None:
-                # Проверяем, является ли элемент таблицей
-                if next_element.tag.endswith('tbl'):
-                    # Находим индекс таблицы в документе
-                    for table_idx, table in enumerate(doc.tables):
-                        if table._element == next_element:
-                            return doc.tables[table_idx]
-
-                next_element = next_element.getnext()
-
-    return None
-
-
-def replace_and_format_table(doc, data):
-    """Удаляет строки с нулевыми или отрицательными значениями во 2-м столбце таблицы результатов"""
-    logger = logging.getLogger(__name__)
-    table = find_results_table(doc)
-
-    if not table:
-        logger.warning("Таблица 'Протокол результатов исследования' не найдена")
-        return
-
-    logger.info(f"Начало обработки таблицы. Всего строк: {len(table.rows)}")
-    rows_to_delete = []
-
-    for row_idx, row in enumerate(table.rows):
-        if len(row.cells) < 2:
-            logger.debug(f"Строка {row_idx} пропущена - менее 2 столбцов")
-            continue
-
-        second_cell = row.cells[1]
-        cell_value = second_cell.text.strip()
-        logger.debug(f"Строка {row_idx}, значение: '{cell_value}'")
-
-        try:
-            # Пробуем преобразовать в число
-            num_value = float(cell_value.replace(',', '.'))
-            if num_value == 0 or num_value < -1000:
-                logger.info(f"Найден 0/большое отрицательное значение в строке {row_idx}: {num_value}")
-                rows_to_delete.append(row_idx)
-        except ValueError:
-            # Если не число, проверяем текстовые значения
-            if cell_value in ("0", "0.0", "0,00", "-", "-2146826252"):
-                logger.info(f"Найден 0/большое отрицательное значение (текст) в строке {row_idx}: '{cell_value}'")
-                rows_to_delete.append(row_idx)
-
-    logger.info(f"Найдено строк для удаления: {len(rows_to_delete)}")
-
-    # Удаляем строки в обратном порядке
-    for row_idx in sorted(rows_to_delete, reverse=True):
-        if row_idx < len(table.rows):
-            logger.debug(f"Удаление строки {row_idx}")
-            table._tbl.remove(table.rows[row_idx]._tr)
-        else:
-            logger.warning(f"Индекс строки {row_idx} вне диапазона")
-
-    logger.info(f"Удалено строк: {len(rows_to_delete)}. Осталось строк: {len(table.rows)}")
-
-
-
-# Функция замены меток (без форматирования единиц измерения)
-def replace_tags_only(doc, data):
-    """Простая замена меток в тексте и таблицах без изменения структуры"""
-    # Обработка обычного текста
-    for paragraph in doc.paragraphs:
-        for key, value in data.items():
-            if key in paragraph.text:
-                paragraph.text = paragraph.text.replace(key, str(value))
-                set_font_size(paragraph, 12)
-
-    # Обработка таблиц
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    for key, value in data.items():
-                        original_text = paragraph.text
-                        if key in original_text:
-                            updated_text = original_text.replace(key, str(value))
-                            paragraph.text = updated_text
-                            # Проверяем, является ли метка единственным содержимым ячейки
-                            if original_text.strip() == key:
-                                paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-                            else:
-                                paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-                            set_font_size(paragraph, 12)
-
-
-# Функция восстановления единиц измерения
-def fix_units(doc):
-    """
-    Автоматически находит все '2' и '3' после единиц (кгс, г, м)
-    и поднимает их в надстрочный индекс, даже если написано раздельно.
-    Примеры:
-    - кгс/см2 → кгс/см²
-    - кгс см2 → кгс см²
-    - м2 → м²
-    - г/см3 → г/см³
-    """
-    # Регулярное выражение для поиска всех "2" и "3" после единиц
-    pattern = re.compile(r'(кгс|г|м)([/ ]?[см]?)(2|3)')
-
-    def process_paragraph(paragraph):
-        for run in paragraph.runs:
-            # Заменяем все вхождения в тексте
-            text = pattern.sub(lambda m: f"{m.group(1)}{m.group(2)}{'²' if m.group(3) == '2' else '³'}", run.text)
-            if text != run.text:
-                run.text = text
-
-    # Обрабатываем весь документ
-    for paragraph in doc.paragraphs:
-        process_paragraph(paragraph)
-
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    process_paragraph(paragraph)
-
-
-def replace_plain_tags(doc, data):
-    """Заменяет метки БЕЗ скобок с сохранением форматирования"""
-
-    # Обработка обычного текста
-    for paragraph in doc.paragraphs:
-        _process_paragraph_plain(paragraph, data)
-
-    # Обработка таблиц
-    for table in doc.tables:
-        for row_idx, row in enumerate(table.rows):
-            for col_idx, cell in enumerate(row.cells):
-                for paragraph in cell.paragraphs:
-                    _process_paragraph_plain(
-                        paragraph,
-                        data,
-                        is_table=True,
-                        col_idx=col_idx
-                    )
-
-
-def _process_paragraph_plain(paragraph, data, is_table=False, col_idx=0):
-    """Обрабатывает параграф с метками без скобок"""
-    # Пропускаем параграфы с графиками
-    if any("{{Picture" in run.text for run in paragraph.runs):
-        return
-
-    # Объединяем Runs для поиска разбитых меток
-    full_text = ''.join(run.text for run in paragraph.runs)
-
-    # Заменяем метки
-    changed = False
-    for tag, value in data.items():
-        if tag in full_text:
-            full_text = full_text.replace(tag, str(value))
-            changed = True
-
-    if not changed:
-        return
-
-    # Сохраняем позиции надстрочных символов
-    sup_chars = {'²', '³', '⁴'}
-    sup_positions = [i for i, c in enumerate(full_text) if c in sup_chars]
-
-    # Восстанавливаем текст
-    paragraph.clear()
-    new_run = paragraph.add_run(full_text)
-
-    # Восстанавливаем надстрочные символы
-    for pos in sup_positions:
-        if pos < len(full_text) and full_text[pos] in sup_chars:
-            new_run.font.superscript = True
-
-    # Форматирование для таблиц
-    if is_table:
-        paragraph.alignment = (
-            WD_PARAGRAPH_ALIGNMENT.LEFT if col_idx == 0
-            else WD_PARAGRAPH_ALIGNMENT.CENTER
-        )
-
-
-def replace_tags_preserve_format(doc, data):
-    """Заменяет метки, сохраняя ИСХОДНОЕ форматирование текста"""
-
-    # Обработка обычных параграфов
-    for paragraph in doc.paragraphs:
-        _process_paragraph_preserve(paragraph, data)
-
-    # Обработка таблиц
-    for table in doc.tables:
-        for row in table.rows:
-            for col_idx, cell in enumerate(row.cells):
-                for paragraph in cell.paragraphs:
-                    _process_paragraph_preserve(
-                        paragraph,
-                        data,
-                        is_table=True,
-                        col_idx=col_idx
-                    )
-
-
-def _process_paragraph_preserve(paragraph, data, is_table=False, col_idx=0):
-    """Обрабатывает параграф с полным сохранением форматирования"""
-    # Пропускаем параграфы с графиками
-    if any("{{Picture" in run.text for run in paragraph.runs):
-        return
-
-    # Работаем с каждым Run отдельно
-    for run in paragraph.runs:
-        original_text = run.text
-        if not any(tag in original_text for tag in data.keys()):
-            continue
-
-        # Сохраняем ВСЕ атрибуты форматирования
-        original_font = {
-            'name': run.font.name,
-            'size': run.font.size,
-            'bold': run.font.bold,
-            'italic': run.font.italic,
-            'underline': run.font.underline,
-            'color': run.font.color.rgb if run.font.color else None,
-            'superscript': run.font.superscript,
-            'subscript': run.font.subscript
-        }
-
-        # Заменяем метки
-        new_text = original_text
-        for tag, value in data.items():
-            if tag in original_text:
-                new_text = new_text.replace(tag, format_units(str(value)))
-
-        # Применяем изменения
-        run.text = new_text
-
-        # Восстанавливаем ВСЕ атрибуты
-        run.font.name = original_font['name']
-        run.font.size = original_font['size']  # Сохраняем исходный размер шрифта
-        run.font.bold = original_font['bold']
-        run.font.italic = original_font['italic']
-        run.font.underline = original_font['underline']
-        if original_font['color']:
-            run.font.color.rgb = original_font['color']
-        run.font.superscript = original_font['superscript']  # Восстанавливаем надстрочные
-        run.font.subscript = original_font['subscript']
-
-    # Выравнивание для таблиц
-    if is_table:
-        paragraph.alignment = (
-            WD_PARAGRAPH_ALIGNMENT.LEFT if col_idx == 0
-            else WD_PARAGRAPH_ALIGNMENT.CENTER
-        )
-
-
-
-def fix_split_runs(paragraph):
-    """Объединяет разбитые Runs (если метка разорвана)"""
-    if len(paragraph.runs) <= 1:
-        return
-
-    full_text = ''.join(run.text for run in paragraph.runs)
-    paragraph.clear()
-    new_run = paragraph.add_run(full_text)
-    # Переносим форматирование первого Run
-    if paragraph.runs:
-        first_run = paragraph.runs[0]
-        first_run.font.size = Pt(12)
-
-
-def normalize_text(text):
-    """
-    Нормализует текст, удаляя или заменяя специальные символы.
-    """
-    if isinstance(text, str):
-        # Нормализация текста
-        normalized_text = unicodedata.normalize('NFKD', text)
-        # Удаление всех символов, которые не являются буквами, цифрами или пробелами
-        return ''.join(c for c in normalized_text if unicodedata.category(c) != 'So')
-    return text
-
-
-def safe_quit_office(app, visible_status=None):
-    """Безопасное закрытие офисного приложения только если мы его создавали"""
-    try:
-        if app and hasattr(app, 'Quit') and (visible_status is None or not visible_status):
-            app.Quit()
-    except Exception as e:
-        logger.warning(f"Ошибка при закрытии офисного приложения: {str(e)}")
-
-
-def normalize_string(value):
-    if isinstance(value, str):
-        # Если есть символы степени — не трогаем
-        if any(c in value for c in ['²', '³', '⁴', '⁵', '⁻']):
-            return value
-
-        value = value.strip()
-        value = re.sub(r'\s+', ' ', value)
-        value = value.replace('\xa0', ' ')
-        value = value.replace('\n', ' ').replace('\r', '')
-    return value
-
-
-def extract_numbers_before_letter(value):
-    match = re.match(r'(\d+)', value)
-    return match.group(0) if match else ''
-
-
-def convert_to_datetime(value):
-    if not value or value == '-':
-        return None
-    if isinstance(value, str):
-        try:
-            return datetime.strptime(value, "%d.%m.%Y")
-        except ValueError:
-            return None
-    elif isinstance(value, datetime):
-        return value
-    return None
-
-
-def copy_excel_to_word_pandas(excel_path, word_path, sheet_name, search_text):
-    """Копирует данные из Excel (все 40 столбцов) в Word документ, заменя указанную метку таблицей."""
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    import pandas as pd
-    from docx import Document
-    import win32com.client
-    import pythoncom
-    import os
-    import logging
-
-    # Настройка логирования
-    logging.basicConfig(level=logging.INFO)
-
-    # 1. Проверка формата через ячейку AM1 и чтение данных через win32com
-    pythoncom.CoInitialize()
-    use_minimal_columns = False
-    all_data = []
-    try:
-        excel_app = win32com.client.Dispatch("Excel.Application")
-        excel_app.Visible = False
-        workbook = excel_app.Workbooks.Open(os.path.abspath(excel_path))
-        sheet = workbook.Sheets(sheet_name)
-
-        # Проверка формата
-        AM1_value = sheet.Range("AM1").Value
-        use_minimal_columns = str(AM1_value).strip() == ""
-        logging.info(f"Формат таблицы: {'минимальный' if use_minimal_columns else 'полный'}")
-
-        # Чтение всех 40 столбцов (A-AN) и первых 16 строк
-        for row in range(1, 17):  # Строки 1-16 (нумерация с 1)
-            row_data = []
-            for col in range(1, 41):  # Колонки A-AN (1-40)
-                cell_value = sheet.Cells(row, col).Value
-                row_data.append(cell_value)
-            all_data.append(row_data)
-
-    except Exception as e:
-        logging.error(f"Ошибка чтения Excel через win32com: {str(e)}")
-        return None
-    finally:
-        # Гарантированное освобождение ресурсов
-        if workbook:
-            try:
-                workbook.Close(False)  # Закрываем только книгу
-            except Exception as e:
-                logging.warning(f"Ошибка при закрытии workbook в copy_excel_to_word_pandas: {e}")
-
-        excel_app = None
-        workbook = None
-        # pythoncom.CoUninitialize()
-
-    # 2. Обработка данных
-    try:
-        # Создаем DataFrame из прочитанных данных
-        df = pd.DataFrame(all_data)
-
-        # Проверка структуры данных
-        if len(df.columns) < 40:
-            logging.warning(f"Файл содержит только {len(df.columns)} из 40 столбцов")
-
-        # Выбор формата таблицы
-        if use_minimal_columns:
-            columns = [34, 35, 36, 37]  # AI-AL (индексы 34-37, так как в Python нумерация с 0)
-        else:
-            columns = list(range(34, 40))  # AI-AN (34-39)
-
-        # Фильтрация данных (берем строки 3-16, так как в all_data строки 1-16)
-        data_df = df.iloc[2:16, columns].copy()
-        data_df.columns = [str(df.iloc[1, col]) for col in columns]
-
-        # Обработка данных
-        if not data_df.empty:
-            # Первая колонка - дата
-            data_df.iloc[:, 0] = pd.to_datetime(data_df.iloc[:, 0], errors='coerce').dt.strftime('%d.%m.%Y')
-
-            # Остальные колонки - числа
-            for col in data_df.columns[1:]:
-                data_df[col] = pd.to_numeric(data_df[col], errors='coerce').round(1)
-
-        data_df = data_df.dropna(how='all')
-        logging.info(f"Данные для вставки:\n{data_df.to_string()}")
-
-    except Exception as e:
-        logging.error(f"Ошибка обработки данных: {str(e)}")
-        return None
-
-    # 3. Вставка таблицы в Word (остается без изменений)
-    try:
-        doc = Document(word_path)
-        found = False
-
-        for paragraph in doc.paragraphs:
-            if search_text in paragraph.text:
-                table = doc.add_table(rows=data_df.shape[0] + 1, cols=data_df.shape[1])
-                table.style = 'Table Grid'
-
-                # Заголовки
-                for col_idx, header in enumerate(data_df.columns):
-                    cell = table.cell(0, col_idx)
-                    cell.text = str(header)
-                    cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    if cell.paragraphs[0].runs:
-                        cell.paragraphs[0].runs[0].font.bold = True
-
-                # Данные
-                for row_idx in range(data_df.shape[0]):
-                    for col_idx in range(data_df.shape[1]):
-                        value = data_df.iat[row_idx, col_idx]
-                        cell = table.cell(row_idx + 1, col_idx)
-                        cell.text = str(value) if not pd.isna(value) else ''
-                        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-                # Замена метки
-                paragraph.text = ''
-                paragraph._element.addnext(table._element)
-                found = True
-                break
-
-        if not found:
-            raise ValueError(f"Метка '{search_text}' не найдена в документе")
-
-        output_path = os.path.join(os.path.dirname(word_path), 'KVD_For_Killing.docx')
-        doc.save(output_path)
-        logging.info(f"Документ сохранен: {output_path}")
-        return output_path
-
-    except Exception as e:
-        logging.error(f"Ошибка работы с Word: {str(e)}")
-        return None
-
-
-# --------------------------------------------------------------------------------------------------------------
 
 
 
@@ -797,34 +146,7 @@ class PDFReader:
 
 
 
-
 # GUI--------------------------------------------------------------------------------
-
-def ensure_python_dll():
-    if getattr(sys, 'frozen', False):
-        # Для собранного приложения (PyInstaller)
-        base_path = sys._MEIPASS
-        dll_path = os.path.join(base_path, 'python312.dll')
-        if not os.path.exists(dll_path):
-            raise FileNotFoundError(f"Файл python312.dll не найден в {dll_path}!")
-    else:
-        # Для запуска из исходников
-        dll_path = os.path.join(os.path.dirname(__file__), 'python312.dll')
-        if not os.path.exists(dll_path):
-            raise FileNotFoundError(f"Файл python312.dll не найден в {dll_path}!")
-
-
-# Вызов функции в начале работы программы
-# ensure_python_dll()
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='app.log',  # Имя файла для логов
-    filemode='w'  # 'w' для перезаписи файла, 'a' для добавления
-)
-
-
 class ReportGUI:
     def __init__(self, root):
         self.root = root
@@ -836,7 +158,7 @@ class ReportGUI:
         self.pdf_path = None
         self.output_file_path = None
         self.root.title("Параметры проекта")
-        self.root.minsize(900, 600)
+        self.root.minsize(600, 705)
 
         self.color_buttons = []
 
@@ -921,6 +243,30 @@ class ReportGUI:
             logging.error(f"Ошибка при очистке базы данных: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка при очистке базы данных: {str(e)}")
 
+    @staticmethod
+    def ensure_python_dll():
+        if getattr(sys, 'frozen', False):
+            # Для собранного приложения (PyInstaller)
+            base_path = sys._MEIPASS
+            dll_path = os.path.join(base_path, 'python312.dll')
+            if not os.path.exists(dll_path):
+                raise FileNotFoundError(f"Файл python312.dll не найден в {dll_path}!")
+        else:
+            # Для запуска из исходников
+            dll_path = os.path.join(os.path.dirname(__file__), 'python312.dll')
+            if not os.path.exists(dll_path):
+                raise FileNotFoundError(f"Файл python312.dll не найден в {dll_path}!")
+
+    # Вызов функции в начале работы программы
+    # ensure_python_dll()
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        filename='app.log',  # Имя файла для логов
+        filemode='w'  # 'w' для перезаписи файла, 'a' для добавления
+    )
+
     def clear_database(self):
         """Очищает базу данных и сбрасывает цвет кнопок"""
         try:
@@ -965,73 +311,92 @@ class ReportGUI:
         # Добавляем обработчик закрытия окна
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def create_labeled_frame(self, parent, text):
+    @staticmethod
+    def create_labeled_frame(parent, text):
         frame = ttk.LabelFrame(parent, text=text)
         frame.pack(fill='x', padx=3, pady=3)
         return frame
 
     def setup_tab1(self):
-        # Фрейм для ввода данных
-        frame1 = self.create_labeled_frame(self.tab1, f"1. {self.section_params[1]['description']}")
+        # 1. Первый ряд: Входные данные, Класс исследования, Успешность исследования
+        first_row_frame = ttk.Frame(self.tab1)
+        first_row_frame.pack(fill='x', padx=3, pady=3)
+
+        frame1 = self.create_labeled_frame(first_row_frame, f"1. {self.section_params[1]['description']}")
+        frame1.pack(side='left', fill='both', expand=True, padx=3, pady=3)
         ttk.Label(frame1, text="Скопируйте данные:").pack(padx=3, pady=3)
         self.insert_button = ttk.Button(frame1, text="Вставить", command=lambda: self.paste_data(1))
         self.insert_button.pack(padx=3, pady=3)
 
-        # Класс исследования
-        frame2 = self.create_labeled_frame(self.tab1, "2. Класс исследования")
+        frame2 = self.create_labeled_frame(first_row_frame, "2. Класс исследования")
+        frame2.pack(side='left', fill='both', expand=True, padx=3, pady=3)
         ttk.Label(frame2, text="Класс (1-3):\n 1 - Рпл\n 2 - Кпрод (Рпл+Рзаб)\n 3 - Рпл, ФЕС, Кпрод").pack(padx=3,
                                                                                                            pady=3)
         self.class_entry = ttk.Entry(frame2)
         self.class_entry.pack(padx=3, pady=3)
 
-        # Успешность исследования
-        frame3 = self.create_labeled_frame(self.tab1, "3. Успешность исследования")
+        frame3 = self.create_labeled_frame(first_row_frame, "3. Успешность исследования")
+        frame3.pack(side='left', fill='both', expand=True, padx=3, pady=3)
         ttk.Label(frame3,
                   text="Успешность (1-7):\n 1 - тех.неиспр(отказ, дрейф, шум)\n 2 - уход уровня\n 3 - АРД\n 4 - ЗКЦ\n 5 - НД\n 6 - пропуски ФА\n 7 - границы/интерф").pack(
             padx=3, pady=3)
         self.success_entry = ttk.Entry(frame3)
         self.success_entry.pack(padx=3, pady=3)
 
-        # Поправки Pпл, Pзаб, Pпл_2, Pзаб_2
+        # 4. Поправки (занимает всю ширину)
         correction_frame = self.create_labeled_frame(self.tab1, "4. Поправки")
+        correction_frame.pack(fill='x', padx=3, pady=3)
         self.setup_correction_fields(correction_frame)
 
-        # Плотность
-        frame8 = self.create_labeled_frame(self.tab1, "5. Плотность")
-        ttk.Label(frame8, text="пересчет Pзаб, (г/см3):").pack(padx=3, pady=3)
-        self.density_zab_entry = ttk.Entry(frame8)
-        self.density_zab_entry.pack(padx=3, pady=3)
-        ttk.Label(frame8, text="пересчет Pпл, (г/см3):").pack(padx=3, pady=3)
-        self.density_pl_entry = ttk.Entry(frame8)
-        self.density_pl_entry.pack(padx=3, pady=3)
+        # 5. Второй ряд: Плотность и Параметры исследования
+        second_row_frame = ttk.Frame(self.tab1)
+        second_row_frame.pack(fill='x', padx=3, pady=3)
 
-        # Вставка параметров исследования
-        params_frame = self.create_labeled_frame(self.tab1, "6. Параметры исследования")
+        # 5. Плотность
+        frame8 = self.create_labeled_frame(second_row_frame, "5. Плотность")
+        frame8.pack(side='left', fill='both', expand=True, padx=3, pady=3)
+
+        ttk.Label(frame8, text="пересчет Pзаб, (г/см3):").pack(padx=3, pady=1)
+        self.density_zab_entry = ttk.Entry(frame8)
+        self.density_zab_entry.pack(padx=3, pady=1)
+        ttk.Label(frame8, text="пересчет Pпл, (г/см3):").pack(padx=3, pady=1)
+        self.density_pl_entry = ttk.Entry(frame8)
+        self.density_pl_entry.pack(padx=3, pady=1)
+
+        # 6. Параметры исследования
+        params_frame = self.create_labeled_frame(second_row_frame, "6. Параметры исследования")
+        params_frame.pack(side='left', fill='both', expand=True, padx=3, pady=3)
 
         self.insert_button2 = ttk.Button(
             params_frame,
             text="Вставить параметры",
-            command=self.paste_research_params  # ← Без скобок!
+            command=self.paste_research_params
         )
         self.insert_button2.pack(padx=3, pady=3)
 
         self.insert_button2_2 = ttk.Button(
             params_frame,
             text="Вставить параметры_2",
-            command=self.paste_research_params_2  # ← Без скобок!
+            command=self.paste_research_params_2
         )
         self.insert_button2_2.pack(padx=3, pady=3)
 
-        # Добавляем поле для "Расчетное время"
-        frame_time = ttk.Frame(self.tab1)
-        frame_time.pack(fill='x', padx=5, pady=5)
+        # 7. Третий ряд: Расчетное время и Давление на последнюю точку
+        third_row_frame = ttk.Frame(self.tab1)
+        third_row_frame.pack(fill='x', padx=3, pady=3)
 
-        ttk.Label(frame_time, text="Расчетное время, ч:").pack(side='left', padx=5)
+        # Расчетное время
+        frame_time = self.create_labeled_frame(third_row_frame, "Расчетное время")
+        frame_time.pack(side='left', fill='both', expand=True, padx=3, pady=3)
+
+        ttk.Label(frame_time, text="Расчетное время, ч:").pack(padx=3, pady=3)
         self.calc_time_entry = ttk.Entry(frame_time)
-        self.calc_time_entry.pack(side='left', padx=5, fill='x', expand=False)
+        self.calc_time_entry.pack(padx=3, pady=3)
 
-        # Добавляем поле для давления на последнюю точку
-        pressure_frame = self.create_labeled_frame(self.tab1, "7. Давление на последнюю точку")
+        # Давление на последнюю точку
+        pressure_frame = self.create_labeled_frame(third_row_frame, "7. Давление на последнюю точку")
+        pressure_frame.pack(side='left', fill='both', expand=True, padx=3, pady=3)
+
         ttk.Label(pressure_frame, text="Р_п.т.:").pack(padx=3, pady=3)
         self.pressure_last_point_entry = ttk.Entry(pressure_frame)
         self.pressure_last_point_entry.pack(padx=3, pady=3)
@@ -1049,69 +414,163 @@ class ReportGUI:
             button.config(style="TButton")
 
     def setup_correction_fields(self, parent):
-        # Создаем основной фрейм для размещения всех полей
+        """Настраивает поля поправок с выпадающим списком пластов"""
+        # Основной фрейм
         main_frame = ttk.Frame(parent)
         main_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
-        # Основной фрейм для основных поправок (4 колонки)
-        corrections_frame = ttk.Frame(main_frame)
-        corrections_frame.pack(side='top', fill='x', pady=5)
+        # Выбор пласта
+        selection_frame = ttk.Frame(main_frame)
+        selection_frame.pack(fill='x', pady=5)
 
-        # Определяем заголовки для поправок
-        correction_labels = [
-            "Поправка на ВНК",
-            "Поправка на ВДП",
-            "Поправка на ГНК"
-        ]
+        ttk.Label(selection_frame, text="Выберите пласт:").pack(side='left', padx=5)
 
-        # Создаем четыре колонки для поправок
-        columns = []
-        for i in range(4):
-            column_frame = ttk.Frame(corrections_frame)
-            column_frame.pack(side='left', fill='y', padx=10, pady=5)
-            columns.append(column_frame)
+        self.plast_var = tk.StringVar()
+        plast_combobox = ttk.Combobox(selection_frame, textvariable=self.plast_var,
+                                      values=["Пласт 1", "Пласт 2", "Пласт 3", "Пласт 4"],
+                                      state="readonly", width=10)
+        plast_combobox.pack(side='left', padx=5)
+        plast_combobox.current(0)  # По умолчанию выбран Пласт 1
+        plast_combobox.bind("<<ComboboxSelected>>", self.on_plast_selected)
 
-        # Заголовки для каждой колонки
-        column_titles = ["Pпл", "Pзаб", "Pпл_2", "Pзаб_2"]
+        # Фрейм для полей поправок (будет обновляться динамически)
+        self.corrections_frame = ttk.Frame(main_frame)
+        self.corrections_frame.pack(fill='both', expand=True, pady=5)
 
-        # Создаем поля для каждой колонки
-        self.ppl_entries = []
-        self.pzab_entries = []
-        self.ppl2_entries = []
-        self.pzab2_entries = []
+        # Словарь для хранения entry-полей по пластам
+        self.correction_entries = {
+            1: {'Рпл': {}, 'Рзаб': {}},
+            2: {'Рпл': {}, 'Рзаб': {}},
+            3: {'Рпл': {}, 'Рзаб': {}},
+            4: {'Рпл': {}, 'Рзаб': {}}
+        }
 
-        entry_lists = [
-            self.ppl_entries,
-            self.pzab_entries,
-            self.ppl2_entries,
-            self.pzab2_entries,
-        ]
+        # Создаем поля для всех пластов изначально (скрытые)
+        for plast_num in range(1, 5):
+            self.create_plast_correction_fields(plast_num)
 
-        for i, column_frame in enumerate(columns):
-            # Добавляем заголовок для колонки
-            ttk.Label(column_frame, text=column_titles[i], font=("Arial", 10, "bold")).pack(anchor='w', padx=3, pady=3)
+        # Показываем поля для пласта 1 по умолчанию
+        self.show_plast_corrections(1)
 
-            # Добавляем поля для поправок
-            for label in correction_labels:
-                frame = ttk.Frame(column_frame)
-                frame.pack(fill='x', padx=3, pady=2)
-                ttk.Label(frame, text=f"{label}:").pack(side='left', padx=3)
-                entry = ttk.Entry(frame, width=10)
-                entry.pack(side='left', padx=3)
-                entry_lists[i].append(entry)
+    def create_plast_correction_fields(self, plast_num):
+        """Создает поля поправок для указанного пласта"""
+        plast_frame = ttk.Frame(self.corrections_frame)
+        plast_frame.grid(row=0, column=0, sticky='nsew')
+        self.corrections_frame.grid_columnconfigure(0, weight=1)
+        self.corrections_frame.grid_rowconfigure(0, weight=1)
 
-        # Поправки на ВНК пластов 3 и 4
-        # Добавляем отдельные поля для "Поправка на ВНК Рпл_3" и "Поправка на ВНК Рпл_4"
-        additional_frame = ttk.Frame(main_frame)
-        additional_frame.pack(side='top', fill='x', padx=5, pady=5)
+        # Заголовок
+        ttk.Label(plast_frame, text=f"Поправки для пласта {plast_num}",
+                  font=("Arial", 11, "bold")).pack(pady=5)
 
-        ttk.Label(additional_frame, text="Поправка на ВНК Рпл_3:", font=("Arial", 8)).pack(side='left', padx=5)
-        self.vnkp_pl3_entry = ttk.Entry(additional_frame, width=8, font=("Arial", 8))
-        self.vnkp_pl3_entry.pack(side='left', padx=5)
+        # Фреймы для Рпл и Рзаб
+        ppl_frame = ttk.LabelFrame(plast_frame, text="Для Рпл")
+        ppl_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
 
-        ttk.Label(additional_frame, text="Поправка на ВНК Рпл_4:", font=("Arial", 8)).pack(side='left', padx=5)
-        self.vnkp_pl4_entry = ttk.Entry(additional_frame, width=8, font=("Arial", 8))
-        self.vnkp_pl4_entry.pack(side='left', padx=5)
+        pzab_frame = ttk.LabelFrame(plast_frame, text="Для Рзаб")
+        pzab_frame.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+
+        # Поля поправок для Рпл
+        corrections = ["Поправка на ВНК", "Поправка на ВДП", "Поправка на ГНК"]
+        correction_keys = ["Vnk", "Vdp", "Gnk"]
+
+        for i, (corr_label, corr_key) in enumerate(zip(corrections, correction_keys)):
+            # Для Рпл
+            frame = ttk.Frame(ppl_frame)
+            frame.pack(fill='x', padx=3, pady=2)
+            ttk.Label(frame, text=f"{corr_label}:").pack(side='left', padx=3)
+            entry = ttk.Entry(frame, width=12)
+            entry.pack(side='left', padx=3)
+            self.correction_entries[plast_num]['Рпл'][corr_key] = entry
+
+            # Для Рзаб
+            frame = ttk.Frame(pzab_frame)
+            frame.pack(fill='x', padx=3, pady=2)
+            ttk.Label(frame, text=f"{corr_label}:").pack(side='left', padx=3)
+            entry = ttk.Entry(frame, width=12)
+            entry.pack(side='left', padx=3)
+            self.correction_entries[plast_num]['Рзаб'][corr_key] = entry
+
+        # Сохраняем ссылку на фрейм и скрываем его
+        setattr(self, f'plast_{plast_num}_frame', plast_frame)
+        plast_frame.grid_forget()
+
+    def show_plast_corrections(self, plast_num):
+        """Показывает поля поправок для указанного пласта"""
+        # Скрываем все фреймы
+        for i in range(1, 5):
+            frame = getattr(self, f'plast_{i}_frame', None)
+            if frame:
+                frame.grid_forget()
+
+        # Показываем выбранный фрейм
+        selected_frame = getattr(self, f'plast_{plast_num}_frame')
+        selected_frame.grid(row=0, column=0, sticky='nsew')
+
+    def on_plast_selected(self, event):
+        """Обработчик выбора пласта"""
+        selected = self.plast_var.get()
+        plast_num = int(selected.split()[-1])  # Извлекаем номер из "Пласт X"
+        self.show_plast_corrections(plast_num)
+
+    def collect_amendments_from_gui(self):
+        """Собирает поправки из полей ввода GUI"""
+        amendments_data = {}
+
+        for plast_num in range(1, 5):
+            # Для Рпл
+            for corr_key, entry in self.correction_entries[plast_num]['Рпл'].items():
+                value = entry.get().strip()
+                if value:
+                    field_name = f'amend{corr_key}Ppl{plast_num if plast_num > 1 else ""}'
+                    amendments_data[field_name] = self.convert_value(value)
+
+            # Для Рзаб
+            for corr_key, entry in self.correction_entries[plast_num]['Рзаб'].items():
+                value = entry.get().strip()
+                if value:
+                    field_name = f'amend{corr_key}Pzab{plast_num if plast_num > 1 else ""}'
+                    amendments_data[field_name] = self.convert_value(value)
+
+        return amendments_data
+
+    def clear_amendments_fields(self):
+        """Очищает все поля поправок"""
+        for plast_num in range(1, 5):
+            for pressure_type in ['Рпл', 'Рзаб']:
+                for entry in self.correction_entries[plast_num][pressure_type].values():
+                    entry.delete(0, 'end')
+
+    def load_amendments_to_gui(self, amendments_data):
+        """Загружает существующие поправки в поля ввода"""
+        self.clear_amendments_fields()
+
+        if not amendments_data:
+            return
+
+        # Маппинг имен полей к нашим entry
+        field_mapping = {}
+
+        for plast_num in range(1, 5):
+            suffix = "" if plast_num == 1 else str(plast_num)
+
+            # Рпл поправки
+            field_mapping[f'amendVnkPpl{suffix}'] = (plast_num, 'Рпл', 'Vnk')
+            field_mapping[f'amendVdpPpl{suffix}'] = (plast_num, 'Рпл', 'Vdp')
+            field_mapping[f'amendGnkPpl{suffix}'] = (plast_num, 'Рпл', 'Gnk')
+
+            # Рзаб поправки
+            field_mapping[f'amendVnkPzab{suffix}'] = (plast_num, 'Рзаб', 'Vnk')
+            field_mapping[f'amendVdpPzab{suffix}'] = (plast_num, 'Рзаб', 'Vdp')
+            field_mapping[f'amendGnkPzab{suffix}'] = (plast_num, 'Рзаб', 'Gnk')
+
+        # Заполняем поля
+        for field_name, value in amendments_data.items():
+            if field_name in field_mapping and value is not None:
+                plast_num, pressure_type, corr_key = field_mapping[field_name]
+                entry = self.correction_entries[plast_num][pressure_type][corr_key]
+                entry.delete(0, 'end')
+                entry.insert(0, str(value))
 
     def setup_tab2(self):
         frame6 = self.create_labeled_frame(self.tab2, f"8. {self.section_params[2]['description']}")
@@ -1214,14 +673,19 @@ class ReportGUI:
 
     def setup_bottom_buttons(self):
         button_frame = ttk.Frame(self.root)
-        button_frame.pack(pady=10)
+        button_frame.pack(side='bottom', fill='x', pady=10)
 
-        template_frame = ttk.Frame(button_frame)
-        template_frame.pack(fill='x', pady=3)
+        # Первый ряд кнопок
+        first_button_row = ttk.Frame(button_frame)
+        first_button_row.pack(fill='x', pady=3)
+
+        template_frame = ttk.Frame(first_button_row)
+        template_frame.pack(side='left', padx=3)
 
         ttk.Label(template_frame, text="Шаблон:").pack(side='left', padx=3)
         self.template_var = tk.StringVar()
-        self.template_combobox = ttk.Combobox(template_frame, textvariable=self.template_var, state="readonly", width=15)
+        self.template_combobox = ttk.Combobox(template_frame, textvariable=self.template_var, state="readonly",
+                                              width=15)
         self.template_combobox['values'] = (
             "КВД_Заполярка", "КВД_Оренбург", "КВД_Оренбург_газ", "КВД_Оренбург2",
             "КВД_Хантос", "КВД_глушение", "КВД_ННГ", "КВД+ИД", "КСД",
@@ -1230,28 +694,32 @@ class ReportGUI:
         self.template_combobox.current(0)
         self.template_combobox.pack(side='left', padx=3)
 
-        clear_btn = ttk.Button(
-            button_frame,
-            text="Очистить данные",
-            command=self.clear_database
-        )
-        clear_btn.pack(side='right', padx=100)
-
         self.select_button = ttk.Button(
-            button_frame,
+            first_button_row,
             text="Выбрать папку для сохранения",
             command=lambda: [self.select_output_directory(), self.change_button_color(self.select_button)]
         )
         self.select_button.pack(side='left', padx=5)
 
-        self.save_button = ttk.Button(button_frame, text="Сохранить внесенные данные", command=self.save_to_db)
+        self.save_button = ttk.Button(first_button_row, text="Сохранить данные", command=self.save_to_db)
         self.save_button.pack(side='left', padx=5)
 
-        calculate_btn = ttk.Button(button_frame, text="Произвести расчет", command=self.perform_calculations)
+        calculate_btn = ttk.Button(first_button_row, text="Расчет", command=self.perform_calculations)
         calculate_btn.pack(side='left', padx=5)
 
-        generate_btn = ttk.Button(button_frame, text="Формировать отчет", command=self.generate_report)
+        # Второй ряд кнопок (в самом низу)
+        second_button_row = ttk.Frame(button_frame)
+        second_button_row.pack(fill='x', pady=3)
+
+        generate_btn = ttk.Button(second_button_row, text="Формировать отчет", command=self.generate_report)
         generate_btn.pack(side='left', padx=5)
+
+        clear_btn = ttk.Button(
+            second_button_row,
+            text="Очистить данные",
+            command=self.clear_database
+        )
+        clear_btn.pack(side='right', padx=5)
 
     def setup_pdf_processing(self):
         """Добавляет элементы интерфейса для обработки PDF."""
@@ -1296,13 +764,35 @@ class ReportGUI:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Ошибка при обработке PDF: {str(e)}")
 
-    def log_invalid_characters(self, text):
+    @staticmethod
+    def log_invalid_characters(text):
         """
         Логирует недопустимые символы в тексте.
         """
         invalid_chars = [char for char in text if ord(char) > 65535]
         if invalid_chars:
             print(f"Обнаружены недопустимые символы: {invalid_chars}")
+
+    @staticmethod
+    def normalize_text(text):
+        """
+        Нормализует текст, удаляя или заменяя специальные символы.
+        """
+        if isinstance(text, str):
+            # Нормализация текста
+            normalized_text = unicodedata.normalize('NFKD', text)
+            # Удаление всех символов, которые не являются буквами, цифрами или пробелами
+            return ''.join(c for c in normalized_text if unicodedata.category(c) != 'So')
+        return text
+
+    @staticmethod
+    def clean_text(text):
+        """
+        Удаляет суррогатные символы из текста.
+        """
+        if isinstance(text, str):
+            return text.encode('utf-8', errors='ignore').decode('utf-8')
+        return text
 
     @normalize_text
     @clean_text
@@ -1331,11 +821,6 @@ class ReportGUI:
             messagebox.showerror("Ошибка", f"Ошибка при вставке данных: {str(e)}")
             return False
 
-    def clean_text(self, text):
-        """Очищает текст от недопустимых символов"""
-        if isinstance(text, str):
-            return text.encode('utf-8', errors='ignore').decode('utf-8')
-        return text
 
     def get_button_by_section(self, section):
         """Возвращает кнопку по номеру секции"""
@@ -1512,60 +997,6 @@ class ReportGUI:
             logging.error(f"Ошибка при сохранении данных: {str(e)}")
             messagebox.showerror("Ошибка", f"Ошибка при сохранении данных: {str(e)}")
 
-
-    def collect_amendments_from_gui(self):
-        """Собирает поправки из полей ввода GUI"""
-        amendments_data = {}
-
-        # Маппинг ваших полей на имена в базе данных
-        field_mapping = {
-            # Pпл (первая модель)
-            (0, 0): 'amendVnkPpl',  # ВНК Рпл
-            (0, 1): 'amendVdpPpl',  # ВДП Рпл
-            (0, 2): 'amendGnkPpl',  # ГНК Рпл
-
-            # Pзаб (первая модель)
-            (1, 0): 'amendVnkPzab',  # ВНК Рзаб
-            (1, 1): 'amendVdpPzab',  # ВДП Рзаб
-            (1, 2): 'amendGnkPzab',  # ГНК Рзаб
-
-            # Pпл_2 (вторая модель)
-            (2, 0): 'amendVnkPpl2',  # ВНК Рпл_2
-            (2, 1): 'amendVdpPpl2',  # ВДП Рпл_2
-            (2, 2): 'amendGnkPpl2',  # ГНК Рпл_2
-
-            # Pзаб_2 (вторая модель)
-            (3, 0): 'amendVnkPzab2',  # ВНК Рзаб_2
-            (3, 1): 'amendVdpPzab2',  # ВДП Рзаб_2
-            (3, 2): 'amendGnkPzab2',  # ГНК Рзаб_2
-        }
-
-        # Собираем данные из всех полей
-        all_entries = [
-            self.ppl_entries,  # Pпл
-            self.pzab_entries,  # Pзаб
-            self.ppl2_entries,  # Pпл_2
-            self.pzab2_entries  # Pзаб_2
-        ]
-
-        for col_idx, entries in enumerate(all_entries):
-            for row_idx, entry in enumerate(entries):
-                value = entry.get().strip()
-                if value:
-                    field_name = field_mapping.get((col_idx, row_idx))
-                    if field_name:
-                        amendments_data[field_name] = ReportGUI.convert_value(value)
-
-        # Дополнительные поправки
-        vnk_pl3 = self.vnkp_pl3_entry.get().strip()
-        if vnk_pl3:
-            amendments_data['amendVnkPpl3'] = ReportGUI.convert_value(vnk_pl3)
-
-        vnk_pl4 = self.vnkp_pl4_entry.get().strip()
-        if vnk_pl4:
-            amendments_data['amendVnkPpl4'] = ReportGUI.convert_value(vnk_pl4)
-
-        return amendments_data
 
     def process_main_data(self, rows):
         """Обрабатывает основные данные (секция 1) и сохраняет в базу"""
@@ -1777,12 +1208,6 @@ class ReportGUI:
         # Оставляем как строку
         return value
 
-    def clear_amendments_fields(self):
-        """Очищает поля ввода поправок"""
-        for entry in self.ppl_entries + self.pzab_entries + self.ppl2_entries + self.pzab2_entries:
-            entry.delete(0, 'end')
-        self.vnkp_pl3_entry.delete(0, 'end')
-        self.vnkp_pl4_entry.delete(0, 'end')
 
     def select_output_file(self):
         self.output_file_path = filedialog.asksaveasfilename(
@@ -1994,7 +1419,546 @@ class ReportGUI:
             logging.error(f"Ошибка расчета давлений: {str(e)}")
             raise
 
+    def format_units(self, text):
+        """Форматирует единицы измерения"""
+        return (
+            text.replace("г/см3", "г/см³")
+            .replace("кгс/см2", "кгс/см²")
+            .replace("м2", "м²")
+            .replace("м3", "м³")
+        )
+
+    @staticmethod
+    def superscript(number):
+        """Преобразует число в надстрочный формат"""
+        superscript_map = {
+            "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+            "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻"
+        }
+        return "".join(superscript_map.get(digit, "") for digit in str(number))
+
+
+    def table_prev_path(self, filename):
+        """Путь к файлам в папке table_prev"""
+        if hasattr(sys, '_MEIPASS'):
+            base_path = os.path.normpath(sys._MEIPASS)
+        else:
+            base_path = os.path.abspath(".")
+
+        return os.path.join(base_path, "table_prev", filename)
+
+    def templates_path(self, filename):
+        """Путь к файлам в папке templates"""
+        if hasattr(sys, '_MEIPASS'):
+            base_path = os.path.normpath(sys._MEIPASS)
+        else:
+            base_path = os.path.abspath(".")
+
+        return os.path.join(base_path, "templates", filename)
+
+    def resource_path(self, relative_path):
+        """
+        Возвращает путь к ресурсу, учитывая работу через PyInstaller.
+        """
+        if hasattr(sys, '_MEIPASS'):
+            base_path = os.path.normpath(sys._MEIPASS)
+        else:
+            # base_path = os.path.dirname(os.path.abspath(__file__))
+            base_path = os.path.abspath(".")
+        full_path = os.path.join(base_path, relative_path)
+        print(f"Resource path: {full_path}")  # Логирование пути
+        return full_path
+
+    def set_font_size(self, paragraph_or_run, size):
+        """Устанавливает размер шрифта для параграфа или отдельного run"""
+        if hasattr(paragraph_or_run, 'runs'):
+            # Это Paragraph - применяем ко всем runs
+            for run in paragraph_or_run.runs:
+                run.font.size = Pt(size)
+        else:
+            # Это Run - применяем непосредственно
+            paragraph_or_run.font.size = Pt(size)
+
+
+    # Функция вставки diagnostic_text на место метки {{diagnostic_text}}
+    @staticmethod
+    def insert_diagnostic_text(doc, diagnostic_text):
+        """Вставляет диагностический текст на место метки {{diagnostic_text}}"""
+        # Загрузка текстовых шаблонов
+        with open(doc.resource_path('text_templates.json'), 'r', encoding='utf-8') as f:
+            TEXT_TEMPLATES = json.load(f)
+        # Получаем текст из шаблонов
+        diagnostic_content = doc.get_nested_value(TEXT_TEMPLATES, diagnostic_text.split('.'))
+
+        # Ищем метку в параграфах
+        for paragraph in doc.paragraphs:
+            if "{{diagnostic_text}}" in paragraph.text:
+                for run in paragraph.runs:
+                    if "{{diagnostic_text}}" in run.text:
+                        run.text = run.text.replace("{{diagnostic_text}}", diagnostic_content)
+                        break
+                break
+
+    # Вспомогательная функция для получения вложенных значений из словаря
+    @staticmethod
+    def get_nested_value(dictionary, keys):
+        for key in keys:
+            dictionary = dictionary[key]
+        return dictionary
+
+    # ищем таблицу 'Протокол результатов исследования'
+    def find_results_table(self, doc):
+        """
+        Находит таблицу 'Протокол результатов исследования' по тексту перед ней
+        Возвращает таблицу или None если не найдена
+        """
+        # Ищем параграф с заголовком
+        for i, paragraph in enumerate(doc.paragraphs):
+            if "Протокол результатов исследования" in paragraph.text:
+                # Ищем следующую после параграфа таблицу
+                next_element = paragraph._element.getnext()
+
+                while next_element is not None:
+                    # Проверяем, является ли элемент таблицей
+                    if next_element.tag.endswith('tbl'):
+                        # Находим индекс таблицы в документе
+                        for table_idx, table in enumerate(doc.tables):
+                            if table._element == next_element:
+                                return doc.tables[table_idx]
+
+                    next_element = next_element.getnext()
+
+        return None
+
+    @staticmethod
+    def replace_and_format_table(doc, data):
+        """Удаляет строки с нулевыми или отрицательными значениями во 2-м столбце таблицы результатов"""
+        logger = logging.getLogger(__name__)
+        table = doc.find_results_table(doc)
+
+        if not table:
+            logger.warning("Таблица 'Протокол результатов исследования' не найдена")
+            return
+
+        logger.info(f"Начало обработки таблицы. Всего строк: {len(table.rows)}")
+        rows_to_delete = []
+
+        for row_idx, row in enumerate(table.rows):
+            if len(row.cells) < 2:
+                logger.debug(f"Строка {row_idx} пропущена - менее 2 столбцов")
+                continue
+
+            second_cell = row.cells[1]
+            cell_value = second_cell.text.strip()
+            logger.debug(f"Строка {row_idx}, значение: '{cell_value}'")
+
+            try:
+                # Пробуем преобразовать в число
+                num_value = float(cell_value.replace(',', '.'))
+                if num_value == 0 or num_value < -1000:
+                    logger.info(f"Найден 0/большое отрицательное значение в строке {row_idx}: {num_value}")
+                    rows_to_delete.append(row_idx)
+            except ValueError:
+                # Если не число, проверяем текстовые значения
+                if cell_value in ("0", "0.0", "0,00", "-", "-2146826252"):
+                    logger.info(f"Найден 0/большое отрицательное значение (текст) в строке {row_idx}: '{cell_value}'")
+                    rows_to_delete.append(row_idx)
+
+        logger.info(f"Найдено строк для удаления: {len(rows_to_delete)}")
+
+        # Удаляем строки в обратном порядке
+        for row_idx in sorted(rows_to_delete, reverse=True):
+            if row_idx < len(table.rows):
+                logger.debug(f"Удаление строки {row_idx}")
+                table._tbl.remove(table.rows[row_idx]._tr)
+            else:
+                logger.warning(f"Индекс строки {row_idx} вне диапазона")
+
+        logger.info(f"Удалено строк: {len(rows_to_delete)}. Осталось строк: {len(table.rows)}")
+
+    # Функция замены меток (без форматирования единиц измерения)
+    @staticmethod
+    def replace_tags_only(doc, data):
+        """Простая замена меток в тексте и таблицах без изменения структуры"""
+        # Обработка обычного текста
+        for paragraph in doc.paragraphs:
+            for key, value in data.items():
+                if key in paragraph.text:
+                    paragraph.text = paragraph.text.replace(key, str(value))
+                    doc.set_font_size(paragraph, 12)
+
+        # Обработка таблиц
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        for key, value in data.items():
+                            original_text = paragraph.text
+                            if key in original_text:
+                                updated_text = original_text.replace(key, str(value))
+                                paragraph.text = updated_text
+                                # Проверяем, является ли метка единственным содержимым ячейки
+                                if original_text.strip() == key:
+                                    paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+                                else:
+                                    paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
+                                doc.set_font_size(paragraph, 12)
+
+    # Функция восстановления единиц измерения
+    @staticmethod
+    def fix_units(doc):
+        """
+        Автоматически находит все '2' и '3' после единиц (кгс, г, м)
+        и поднимает их в надстрочный индекс, даже если написано раздельно.
+        Примеры:
+        - кгс/см2 → кгс/см²
+        - кгс см2 → кгс см²
+        - м2 → м²
+        - г/см3 → г/см³
+        """
+        # Регулярное выражение для поиска всех "2" и "3" после единиц
+        pattern = re.compile(r'(кгс|г|м)([/ ]?[см]?)(2|3)')
+
+        @staticmethod
+        def process_paragraph(paragraph):
+            for run in paragraph.runs:
+                # Заменяем все вхождения в тексте
+                text = pattern.sub(lambda m: f"{m.group(1)}{m.group(2)}{'²' if m.group(3) == '2' else '³'}", run.text)
+                if text != run.text:
+                    run.text = text
+
+        # Обрабатываем весь документ
+        for paragraph in doc.paragraphs:
+            process_paragraph(paragraph)
+
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        process_paragraph(paragraph)
+
+    @staticmethod
+    def replace_plain_tags(doc, data):
+        """Заменяет метки БЕЗ скобок с сохранением форматирования"""
+
+        # Обработка обычного текста
+        for paragraph in doc.paragraphs:
+            doc._process_paragraph_plain(paragraph, data)
+
+        # Обработка таблиц
+        for table in doc.tables:
+            for row_idx, row in enumerate(table.rows):
+                for col_idx, cell in enumerate(row.cells):
+                    for paragraph in cell.paragraphs:
+                        doc._process_paragraph_plain(
+                            paragraph,
+                            data,
+                            is_table=True,
+                            col_idx=col_idx
+                        )
+
+    @staticmethod
+    def _process_paragraph_plain(paragraph, data, is_table=False, col_idx=0):
+        """Обрабатывает параграф с метками без скобок"""
+        # Пропускаем параграфы с графиками
+        if any("{{Picture" in run.text for run in paragraph.runs):
+            return
+
+        # Объединяем Runs для поиска разбитых меток
+        full_text = ''.join(run.text for run in paragraph.runs)
+
+        # Заменяем метки
+        changed = False
+        for tag, value in data.items():
+            if tag in full_text:
+                full_text = full_text.replace(tag, str(value))
+                changed = True
+
+        if not changed:
+            return
+
+        # Сохраняем позиции надстрочных символов
+        sup_chars = {'²', '³', '⁴'}
+        sup_positions = [i for i, c in enumerate(full_text) if c in sup_chars]
+
+        # Восстанавливаем текст
+        paragraph.clear()
+        new_run = paragraph.add_run(full_text)
+
+        # Восстанавливаем надстрочные символы
+        for pos in sup_positions:
+            if pos < len(full_text) and full_text[pos] in sup_chars:
+                new_run.font.superscript = True
+
+        # Форматирование для таблиц
+        if is_table:
+            paragraph.alignment = (
+                WD_PARAGRAPH_ALIGNMENT.LEFT if col_idx == 0
+                else WD_PARAGRAPH_ALIGNMENT.CENTER
+            )
+
+    @staticmethod
+    def replace_tags_preserve_format(doc, data):
+        """Заменяет метки, сохраняя ИСХОДНОЕ форматирование текста"""
+
+        # Обработка обычных параграфов
+        for paragraph in doc.paragraphs:
+            doc._process_paragraph_preserve(paragraph, data)
+
+        # Обработка таблиц
+        for table in doc.tables:
+            for row in table.rows:
+                for col_idx, cell in enumerate(row.cells):
+                    for paragraph in cell.paragraphs:
+                        doc._process_paragraph_preserve(
+                            paragraph,
+                            data,
+                            is_table=True,
+                            col_idx=col_idx
+                        )
+
+    @staticmethod
+    def _process_paragraph_preserve(paragraph, data, is_table=False, col_idx=0):
+        """Обрабатывает параграф с полным сохранением форматирования"""
+        # Пропускаем параграфы с графиками
+        if any("{{Picture" in run.text for run in paragraph.runs):
+            return
+
+        # Работаем с каждым Run отдельно
+        for run in paragraph.runs:
+            original_text = run.text
+            if not any(tag in original_text for tag in data.keys()):
+                continue
+
+            # Сохраняем ВСЕ атрибуты форматирования
+            original_font = {
+                'name': run.font.name,
+                'size': run.font.size,
+                'bold': run.font.bold,
+                'italic': run.font.italic,
+                'underline': run.font.underline,
+                'color': run.font.color.rgb if run.font.color else None,
+                'superscript': run.font.superscript,
+                'subscript': run.font.subscript
+            }
+
+            # Заменяем метки
+            new_text = original_text
+            for tag, value in data.items():
+                if tag in original_text:
+                    new_text = new_text.replace(tag, paragraph.format_units(str(value)))
+
+            # Применяем изменения
+            run.text = new_text
+
+            # Восстанавливаем ВСЕ атрибуты
+            run.font.name = original_font['name']
+            run.font.size = original_font['size']  # Сохраняем исходный размер шрифта
+            run.font.bold = original_font['bold']
+            run.font.italic = original_font['italic']
+            run.font.underline = original_font['underline']
+            if original_font['color']:
+                run.font.color.rgb = original_font['color']
+            run.font.superscript = original_font['superscript']  # Восстанавливаем надстрочные
+            run.font.subscript = original_font['subscript']
+
+        # Выравнивание для таблиц
+        if is_table:
+            paragraph.alignment = (
+                WD_PARAGRAPH_ALIGNMENT.LEFT if col_idx == 0
+                else WD_PARAGRAPH_ALIGNMENT.CENTER
+            )
+
+    @staticmethod
+    def fix_split_runs(paragraph):
+        """Объединяет разбитые Runs (если метка разорвана)"""
+        if len(paragraph.runs) <= 1:
+            return
+
+        full_text = ''.join(run.text for run in paragraph.runs)
+        paragraph.clear()
+        new_run = paragraph.add_run(full_text)
+        # Переносим форматирование первого Run
+        if paragraph.runs:
+            first_run = paragraph.runs[0]
+            first_run.font.size = Pt(12)
+
+
+    @staticmethod
+    def safe_quit_office(app, visible_status=None):
+        """Безопасное закрытие офисного приложения только если мы его создавали"""
+        try:
+            if app and hasattr(app, 'Quit') and (visible_status is None or not visible_status):
+                app.Quit()
+        except Exception as e:
+            logger.warning(f"Ошибка при закрытии офисного приложения: {str(e)}")
+
+    @staticmethod
+    def normalize_string(value):
+        if isinstance(value, str):
+            # Если есть символы степени — не трогаем
+            if any(c in value for c in ['²', '³', '⁴', '⁵', '⁻']):
+                return value
+
+            value = value.strip()
+            value = re.sub(r'\s+', ' ', value)
+            value = value.replace('\xa0', ' ')
+            value = value.replace('\n', ' ').replace('\r', '')
+        return value
+
+    @staticmethod
+    def extract_numbers_before_letter(value):
+        match = re.match(r'(\d+)', value)
+        return match.group(0) if match else ''
+
+    @staticmethod
+    def convert_to_datetime(value):
+        if not value or value == '-':
+            return None
+        if isinstance(value, str):
+            try:
+                return datetime.strptime(value, "%d.%m.%Y")
+            except ValueError:
+                return None
+        elif isinstance(value, datetime):
+            return value
+        return None
+
+    @staticmethod
+    def copy_excel_to_word_pandas(excel_path, word_path, sheet_name, search_text):
+        """Копирует данные из Excel (все 40 столбцов) в Word документ, заменя указанную метку таблицей."""
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        import pandas as pd
+        from docx import Document
+        import win32com.client
+        import pythoncom
+        import os
+        import logging
+
+        # Настройка логирования
+        logging.basicConfig(level=logging.INFO)
+
+        # 1. Проверка формата через ячейку AM1 и чтение данных через win32com
+        pythoncom.CoInitialize()
+        use_minimal_columns = False
+        all_data = []
+        try:
+            excel_app = win32com.client.Dispatch("Excel.Application")
+            excel_app.Visible = False
+            workbook = excel_app.Workbooks.Open(os.path.abspath(excel_path))
+            sheet = workbook.Sheets(sheet_name)
+
+            # Проверка формата
+            AM1_value = sheet.Range("AM1").Value
+            use_minimal_columns = str(AM1_value).strip() == ""
+            logging.info(f"Формат таблицы: {'минимальный' if use_minimal_columns else 'полный'}")
+
+            # Чтение всех 40 столбцов (A-AN) и первых 16 строк
+            for row in range(1, 17):  # Строки 1-16 (нумерация с 1)
+                row_data = []
+                for col in range(1, 41):  # Колонки A-AN (1-40)
+                    cell_value = sheet.Cells(row, col).Value
+                    row_data.append(cell_value)
+                all_data.append(row_data)
+
+        except Exception as e:
+            logging.error(f"Ошибка чтения Excel через win32com: {str(e)}")
+            return None
+        finally:
+            # Гарантированное освобождение ресурсов
+            if workbook:
+                try:
+                    workbook.Close(False)  # Закрываем только книгу
+                except Exception as e:
+                    logging.warning(f"Ошибка при закрытии workbook в copy_excel_to_word_pandas: {e}")
+
+            excel_app = None
+            workbook = None
+            # pythoncom.CoUninitialize()
+
+        # 2. Обработка данных
+        try:
+            # Создаем DataFrame из прочитанных данных
+            df = pd.DataFrame(all_data)
+
+            # Проверка структуры данных
+            if len(df.columns) < 40:
+                logging.warning(f"Файл содержит только {len(df.columns)} из 40 столбцов")
+
+            # Выбор формата таблицы
+            if use_minimal_columns:
+                columns = [34, 35, 36, 37]  # AI-AL (индексы 34-37, так как в Python нумерация с 0)
+            else:
+                columns = list(range(34, 40))  # AI-AN (34-39)
+
+            # Фильтрация данных (берем строки 3-16, так как в all_data строки 1-16)
+            data_df = df.iloc[2:16, columns].copy()
+            data_df.columns = [str(df.iloc[1, col]) for col in columns]
+
+            # Обработка данных
+            if not data_df.empty:
+                # Первая колонка - дата
+                data_df.iloc[:, 0] = pd.to_datetime(data_df.iloc[:, 0], errors='coerce').dt.strftime('%d.%m.%Y')
+
+                # Остальные колонки - числа
+                for col in data_df.columns[1:]:
+                    data_df[col] = pd.to_numeric(data_df[col], errors='coerce').round(1)
+
+            data_df = data_df.dropna(how='all')
+            logging.info(f"Данные для вставки:\n{data_df.to_string()}")
+
+        except Exception as e:
+            logging.error(f"Ошибка обработки данных: {str(e)}")
+            return None
+
+        # 3. Вставка таблицы в Word (остается без изменений)
+        try:
+            doc = Document(word_path)
+            found = False
+
+            for paragraph in doc.paragraphs:
+                if search_text in paragraph.text:
+                    table = doc.add_table(rows=data_df.shape[0] + 1, cols=data_df.shape[1])
+                    table.style = 'Table Grid'
+
+                    # Заголовки
+                    for col_idx, header in enumerate(data_df.columns):
+                        cell = table.cell(0, col_idx)
+                        cell.text = str(header)
+                        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        if cell.paragraphs[0].runs:
+                            cell.paragraphs[0].runs[0].font.bold = True
+
+                    # Данные
+                    for row_idx in range(data_df.shape[0]):
+                        for col_idx in range(data_df.shape[1]):
+                            value = data_df.iat[row_idx, col_idx]
+                            cell = table.cell(row_idx + 1, col_idx)
+                            cell.text = str(value) if not pd.isna(value) else ''
+                            cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                    # Замена метки
+                    paragraph.text = ''
+                    paragraph._element.addnext(table._element)
+                    found = True
+                    break
+
+            if not found:
+                raise ValueError(f"Метка '{search_text}' не найдена в документе")
+
+            output_path = os.path.join(os.path.dirname(word_path), 'KVD_For_Killing.docx')
+            doc.save(output_path)
+            logging.info(f"Документ сохранен: {output_path}")
+            return output_path
+
+        except Exception as e:
+            logging.error(f"Ошибка работы с Word: {str(e)}")
+            return None
+
+    # --------------------------------------------------------------------------------------------------------------
+
     def generate_report_logic(self, doc, output_file_path, selected_template):
+        global original_font, workbook, excel_helper, db
         import win32com.client
         import os
         import docx
@@ -2038,18 +2002,18 @@ class ReportGUI:
 
                 # Выбор шаблона Word
                 template_map = {
-                    "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
-                    "КВД_Оренбург": templates_path("KVD_Orenburg.docx"),
-                    "КВД_Оренбург_газ": templates_path("KVD_Orenburg_gas.docx"),
-                    "КВД_Оренбург2": templates_path("KVD_Orenburg2.docx"),
-                    "КВД_Хантос": templates_path("KVD_Khantos.docx"),
-                    "КВД_глушение": templates_path("KVD_For_Killing.docx"),
-                    "КВД_ННГ": templates_path("KVD_NNG.docx"),
-                    "КВД+ИД": templates_path("KVD_ID.docx"),
-                    "КСД": templates_path("KSD.docx"),
-                    "КПД": templates_path("KPD.docx"),
-                    "КПД+ИД": templates_path("KPD_ID.docx"),
-                    "ГРП": templates_path("GRP.docx")
+                    "КВД_Заполярка": self.templates_path("KVD_Zapolyarka.docx"),
+                    "КВД_Оренбург": self.templates_path("KVD_Orenburg.docx"),
+                    "КВД_Оренбург_газ": self.templates_path("KVD_Orenburg_gas.docx"),
+                    "КВД_Оренбург2": self.templates_path("KVD_Orenburg2.docx"),
+                    "КВД_Хантос": self.templates_path("KVD_Khantos.docx"),
+                    "КВД_глушение": self.templates_path("KVD_For_Killing.docx"),
+                    "КВД_ННГ": self.templates_path("KVD_NNG.docx"),
+                    "КВД+ИД": self.templates_path("KVD_ID.docx"),
+                    "КСД": self.templates_path("KSD.docx"),
+                    "КПД": self.templates_path("KPD.docx"),
+                    "КПД+ИД": self.templates_path("KPD_ID.docx"),
+                    "ГРП": self.templates_path("GRP.docx")
                 }
 
                 # Преобразуем ключи в нижний регистр для сравнения
@@ -2080,83 +2044,8 @@ class ReportGUI:
                 # После импорта данных получаем их для отчета
                 previous_data = self.db.get_previous_research_data(main_data_id)
                 if previous_data:
-                    replace_tags_only(doc, previous_data)
+                    self.replace_tags_only(doc, previous_data)
                     logging.info("Данные предыдущего исследования добавлены в отчет")
-                # try:
-                #     field_name = data.get('field', '').replace(" ", "_").capitalize()
-                #     previous_data_file = f'Итоговая таблица_{field_name}.xlsx'
-                #     previous_data_path = table_prev_path(previous_data_file)
-                #
-                #     if os.path.exists(previous_data_path):
-                #         try:
-                #             final_table_df = pd.read_excel(previous_data_path, skiprows=11)
-                #             well_num = data.get('well', '').split()[0] if data.get('well') else ''
-                #             logging.info(f"Скважина: {well_num}")
-                #
-                #             # Фильтруем данные по номеру скважины
-                #             final_table_df['Скважина'] = final_table_df['Скважина'].astype(str).str.strip()
-                #             final_table_df = final_table_df.dropna(subset=['Скважина'])
-                #             filtered_data = final_table_df[final_table_df['Скважина'] == well_num]
-                #
-                #             if not filtered_data.empty:
-                #                 # Обработка данных из файла
-                #                 pd.set_option('mode.use_inf_as_na', True)
-                #                 filtered_data.loc[:, 'Дата испытания'] = filtered_data['Дата испытания'].apply(
-                #                     lambda x: datetime.strptime(x, "%d.%m.%Y") if isinstance(x, str) else x
-                #                 )
-                #
-                #                 latest_entry = filtered_data.loc[filtered_data['Дата испытания'].idxmax()]
-                #
-                #                 # СОХРАНЯЕМ ДАННЫЕ В ТАБЛИЦУ prevData
-                #                 prev_data = {
-                #                     'PplVnk': latest_entry.get('Рпл  на ВНК, кгс/см2'),
-                #                     'PzabVnk': latest_entry.get('Рзаб  на ВНК, кгс/см2'),
-                #                     'DataRes': latest_entry.get('Дата испытания'),
-                #                     'Water': latest_entry.get('% воды'),
-                #                     'Q': latest_entry.get('Qж/Qг, м3/сут'),
-                #                     'Kprod': latest_entry.get('Кпрод. м3/сут*кгс/см2'),
-                #                     'Smeh': latest_entry.get('Скин-фактор механич./интегр.'),
-                #                     'Heff': latest_entry.get('Нэф., м.'),
-                #                     'Kgidr': latest_entry.get('Кгидр., Д*см/сПз'),
-                #                     'InputData_ID': main_data_id  # Связь с текущим исследованием
-                #                 }
-                #
-                #                 # Сохраняем в базу данных
-                #                 self.db.insert_prev_data(prev_data)
-                #                 logging.info("Данные предыдущего исследования сохранены в базу")
-                #
-                #                 # Нормализуем строки для отчета
-                #                 final_table_df = final_table_df.map(
-                #                     lambda x: normalize_string(x) if isinstance(x, str) else x)
-                #                 final_table_df.columns = [normalize_string(col) for col in final_table_df.columns]
-                #
-                #                 result_dict = {
-                #                     normalize_string('Рпл  на ВНК, кгс/см2'): latest_entry['Рпл  на ВНК, кгс/см2'],
-                #                     normalize_string('Рзаб  на ВНК, кгс/см2'): latest_entry['Рзаб  на ВНК, кгс/см2'],
-                #                     normalize_string('Дата испытания'): latest_entry['Дата испытания'].strftime(
-                #                         "%d.%m.%Y"),
-                #                     normalize_string('% воды'): str(latest_entry['% воды']),
-                #                     normalize_string('Qж/Qг, м3/сут   '): str(latest_entry['Qж/Qг, м3/сут   ']),
-                #                     normalize_string('Кпрод. м3/сут*кгс/см2'): str(
-                #                         latest_entry['Кпрод. м3/сут*кгс/см2']),
-                #                     normalize_string('Скин-фактор механич./интегр.'): str(
-                #                         latest_entry['Скин-фактор механич./интегр.']),
-                #                     normalize_string('Нэф., м.'): str(latest_entry['Нэф., м. ']),
-                #                     normalize_string('Кгидр., Д*см/сПз'): str(latest_entry['Кгидр., Д*см/сПз'])
-                #                 }
-                #
-                #                 replace_tags_only(doc, result_dict)
-                #                 logging.info("Данные из файла предыдущих исследований успешно загружены.")
-                #
-                #         except Exception as e:
-                #             logging.error(f"Ошибка при чтении файла предыдущих данных Excel: {str(e)}")
-                #
-                #     else:
-                #         logging.warning(f"Файл предыдущих данных не найден: {previous_data_path}")
-                #         logging.info("Для данного отчета не требуется файл с предыдущими данными.")
-                #
-                # except Exception as e:
-                #     logging.error(f"Ошибка при работе с историческими данными: {e}", exc_info=True)
 
                 # Расчет плотности
                 KVD_density = data.get('dens2', 0)
@@ -2239,7 +2128,7 @@ class ReportGUI:
                 # Вставка параметров модели в таблицу результатов
                 def insert_model_params_to_table(doc, model_name, data):
                     """Вставляет параметры модели после строки 'Проницаемость, (мД)'"""
-                    table = find_results_table(doc)
+                    table = doc.find_results_table(doc)
                     if not table:
                         logging.error("Таблица результатов не найдена")
                         return False
@@ -2267,8 +2156,8 @@ class ReportGUI:
                         target_row_idx += 1
 
                         # Форматируем и вставляем данные
-                        name = format_units(param["name"])
-                        value = format_units(str(param["value"]))
+                        name = doc.format_units(param["name"])
+                        value = doc.format_units(str(param["value"]))
 
                         new_row.cells[0].text = name
                         new_row.cells[1].text = value
@@ -2276,11 +2165,11 @@ class ReportGUI:
                         # Устанавливаем выравнивание
                         for paragraph in new_row.cells[0].paragraphs:
                             paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.LEFT
-                            set_font_size(paragraph, 12)
+                            doc.set_font_size(paragraph, 12)
 
                         for paragraph in new_row.cells[1].paragraphs:
                             paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
-                            set_font_size(paragraph, 12)
+                            doc.set_font_size(paragraph, 12)
 
                     logging.info(f"Успешно вставлено {len(params)} параметров модели")
                     return True
@@ -2301,6 +2190,8 @@ class ReportGUI:
                         f"Предупреждение: Модель '{model_value}' не найдена в model_params. Используется модель по умолчанию: {model_name}")
 
                 # Добавляем параметры модели в словарь data
+                with open(doc.resource_path('text_templates.json'), 'r', encoding='utf-8') as f:
+                    TEXT_TEMPLATES = json.load(f)
                 model_data = model_params.get(model_name, {})
                 model_description = TEXT_TEMPLATES["model_descriptions"].get(model_name, "")
 
@@ -2314,7 +2205,7 @@ class ReportGUI:
                     **{f"param_{k}": v for k, v in enumerate(model_data.get("additional_params", []))},
                 })
 
-                replace_tags_only(doc, data)
+                self.replace_tags_only(doc, data)
                 logging.info("Метки в отчете успешно заменены на значения.")
 
                 # Специальная обработка diagnostic_text
@@ -2345,7 +2236,7 @@ class ReportGUI:
                     logging.info("метка diagnostic_text успешно заменена")
 
                 # Удаление лишних строк из таблицы результатов
-                replace_and_format_table(doc, data)
+                self.replace_and_format_table(doc, data)
 
                 doc.save(output_file_path)
                 logging.info(f"Data dictionary content: {json.dumps(data, indent=2, ensure_ascii=False)}")
@@ -2390,7 +2281,7 @@ class ReportGUI:
                     excel_helper.Visible = False
                     excel_helper.DisplayAlerts = False
 
-                    excel_file_path_helper = resource_path("Helper.xlsm")
+                    excel_file_path_helper = self.resource_path("Helper.xlsm")
                     if not os.path.exists(excel_file_path_helper):
                         logger.warning(f"Файл Helper.xlsm не найден: {excel_file_path_helper}")
                         return False
@@ -2466,6 +2357,19 @@ class ReportGUI:
                 return False
 
             main_data_id = last_record.iloc[0]['id']
+            # ДОБАВЛЕНО: Проверяем, выбран ли шаблон "КВД_глушение"
+            selected_template_key = self.template_var.get().strip()
+            if selected_template_key == "КВД_глушение":
+                # Выполняем создание и заполнение таблицы глушения
+                try:
+                    self.db.create_and_fill_damping_table(main_data_id)
+                    self.db.update_damping_table_headers(main_data_id)
+                    logging.info("Таблица глушения создана и заполнена")
+                except Exception as e:
+                    logging.error(f"Ошибка при работе с таблицей глушения: {str(e)}")
+                    messagebox.showerror("Ошибка", f"Не удалось подготовить таблицу глушения: {str(e)}")
+                    return False
+
             parameters = db.get_parameters(main_data_id)
             research_params = db.get_research_params(main_data_id)
             amendments = db.get_amendments(main_data_id)
@@ -2482,18 +2386,18 @@ class ReportGUI:
             data.update(amendments)
 
             template_mapping = {
-                "КВД_Заполярка": templates_path("KVD_Zapolyarka.docx"),
-                "КВД_Оренбург": templates_path("KVD_Orenburg.docx"),
-                "КВД_Оренбург_газ": templates_path("KVD_Orenburg_gas.docx"),
-                "КВД_Оренбург2": templates_path("KVD_Orenburg2.docx"),
-                "КВД_Хантос": templates_path("KVD_Khantos.docx"),
-                "КВД_глушение": templates_path("KVD_For_Killing.docx"),
-                "КВД_ННГ": templates_path("KVD_NNG.docx"),
-                "КВД+ИД": templates_path("KVD_ID.docx"),
-                "КСД": templates_path("KSD.docx"),
-                "КПД": templates_path("KPD.docx"),
-                "КПД+ИД": templates_path("KPD_ID.docx"),
-                "ГРП": templates_path("GRP.docx")
+                "КВД_Заполярка": self.templates_path("KVD_Zapolyarka.docx"),
+                "КВД_Оренбург": self.templates_path("KVD_Orenburg.docx"),
+                "КВД_Оренбург_газ": self.templates_path("KVD_Orenburg_gas.docx"),
+                "КВД_Оренбург2": self.templates_path("KVD_Orenburg2.docx"),
+                "КВД_Хантос": self.templates_path("KVD_Khantos.docx"),
+                "КВД_глушение": self.templates_path("KVD_For_Killing.docx"),
+                "КВД_ННГ": self.templates_path("KVD_NNG.docx"),
+                "КВД+ИД": self.templates_path("KVD_ID.docx"),
+                "КСД": self.templates_path("KSD.docx"),
+                "КПД": self.templates_path("KPD.docx"),
+                "КПД+ИД": self.templates_path("KPD_ID.docx"),
+                "ГРП": self.templates_path("GRP.docx")
             }
 
             # Получаем выбранный шаблон (ключ)
@@ -2508,9 +2412,9 @@ class ReportGUI:
             if selected_template_key.lower() == "квд_глушение":
                 # Создаем временный файл KVD_For_Killing.docx
                 logging.info("Создание файла KVD_For_Killing.docx...")
-                result = copy_excel_to_word_pandas(
-                    excel_path=resource_path('Report.xlsx'),
-                    word_path=os.path.abspath(templates_path('КВД для глушения_prev.docx')),
+                result = self.copy_excel_to_word_pandas(
+                    excel_path=self.resource_path('Report.xlsx'),
+                    word_path=os.path.abspath(str(self.templates_path('КВД для глушения_prev.docx'))),
                     sheet_name='current',
                     search_text='Prognoz_Ppl'
                 )
@@ -2529,7 +2433,7 @@ class ReportGUI:
                 logging.info(f"Имя файла шаблона: {selected_template_file}")
 
             # Формируем полный путь к файлу шаблона
-            template_path = resource_path(selected_template_file)
+            template_path = self.resource_path(selected_template_file)
             print(f"Путь к шаблону: {template_path}")
             logging.info(f"Путь к шаблону Word: {template_path}")
 
@@ -2594,7 +2498,7 @@ class ReportGUI:
             # Вызываем функцию для формирования отчета
             logging.info(f"Вызов generate_report_logic с параметрами: {output_file_path_docx}, {selected_template_key}")
             success = self.generate_report_logic(doc, output_file_path_docx, selected_template_key)
-            fix_units(doc)
+            self.fix_units(doc)
             if success:
                 # Сохраняем финальную версию документа
                 doc.save(output_file_path_docx)

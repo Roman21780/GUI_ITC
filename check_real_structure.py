@@ -23,9 +23,13 @@ def check_real_structures():
             'ModelVNK',
             'PressureVNK',
             'amendments',
+            'amendments2',
+            'amendments3',
+            'amendments4',
             'ModelKSD',
             'calculate',
-            'prevData'
+            'prevData',
+            'dampingTable'
         ]
 
         for table in tables:
